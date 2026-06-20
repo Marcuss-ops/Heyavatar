@@ -75,32 +75,32 @@ CHECKPOINT_MANIFEST: List[Dict[str, object]] = [
     {
         "name": "appearance_feature_extractor.pth",
         "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/appearance_feature_extractor.pth",
-        "sha256": "TBD",
-        "size_bytes": 0,
+        "sha256": "5279bb8654293dbdf327030b397f107237dd9212fb11dd75b83dfb635211ceb5",
+        "size_bytes": 3387959,
     },
     {
         "name": "motion_extractor.pth",
         "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/motion_extractor.pth",
-        "sha256": "TBD",
-        "size_bytes": 0,
+        "sha256": "251e6a94ad667a1d0c69526d292677165110ef7f0cf0f6d199f0e414e8aa0ca5",
+        "size_bytes": 112545506,
     },
     {
         "name": "warping_module.pth",
         "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/warping_module.pth",
-        "sha256": "TBD",
-        "size_bytes": 0,
+        "sha256": "2f61a6f265fe344f14132364859a78bdbbc2068577170693da57fb96d636e282",
+        "size_bytes": 182180086,
     },
     {
         "name": "stitching_retargeting_module.pth",
         "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/retargeting_models/stitching_retargeting_module.pth",
-        "sha256": "TBD",
-        "size_bytes": 0,
+        "sha256": "3652d5a3f95099141a56986aaddec92fadf0a73c87a20fac9a2c07c32b28b611",
+        "size_bytes": 2393098,
     },
     {
         "name": "spade_generator.pth",
         "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/spade_generator.pth",
-        "sha256": "TBD",
-        "size_bytes": 0,
+        "sha256": "4780afc7909a9f84e24c01d73b31a555ef651521a1fe3b2429bd04534d992aee",
+        "size_bytes": 221813590,
     },
 ]
 
@@ -234,6 +234,7 @@ class CheckpointManager:
 
         for entry in self.entries:
             target = self.local_path_for(entry.name)
+            entry.local_path = target
             if target.is_file():
                 if self.verify(entry):
                     continue

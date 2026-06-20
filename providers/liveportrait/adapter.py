@@ -101,37 +101,63 @@ LOG = get_logger("providers.liveportrait")
 def _import_upstream_live_portrait() -> Any:
     """Import the upstream ``LivePortraitPipeline``.
 
-    Tries three well-known locations, in order:
+    Upstream LivePortrait uses relative imports (``from .config ...``)
+    so its ``src/`` directory must be a proper Python package imported
+    as ``src.live_portrait_pipeline`` with the repo *root* (the parent
+    of ``src/``) on ``sys.path``.
 
-    1. ``live_portrait_pipeline`` (if LivePortrait's ``src/`` is on
-       ``PYTHONPATH``).
-    2. ``src.live_portrait_pipeline`` (if the repo was imported as a
-       package named ``src``).
-    3. The ``HEYAVATAR_LIVE_PORTRAIT_SRC`` environment variable, if
-       set, is added to ``sys.path`` and we retry from (1).
+    Resolution order:
+
+    1. ``src.live_portrait_pipeline`` — works when ``LivePortrait/``
+       (the repo root) is on ``PYTHONPATH`` and ``src/__init__.py``
+       exists (we create it at clone time if missing).
+    2. ``live_portrait_pipeline`` — legacy flat-path import for
+       deployments that strip relative imports upstream.
+    3. ``HEYAVATAR_LIVE_PORTRAIT_SRC`` — if set, the directory is
+       added to ``sys.path`` and we retry ``src.live_portrait_pipeline``
+       from there.  Set this to the repo *root*, e.g.
+       ``/opt/LivePortrait``, **not** ``/opt/LivePortrait/src``.
 
     Falls back to ``None`` and lets the caller transition to DEGRADED.
     """
     import importlib
     import sys
 
-    candidates = ("live_portrait_pipeline", "src.live_portrait_pipeline")
-    for c in candidates:
-        try:
-            return importlib.import_module(c)
-        except ImportError:
-            continue
+    # Candidate 1: repo root on PYTHONPATH → import as src.live_portrait_pipeline
+    try:
+        return importlib.import_module("src.live_portrait_pipeline")
+    except ImportError:
+        pass
+
+    # Candidate 2: legacy flat path (someone stripped the package structure)
+    try:
+        return importlib.import_module("live_portrait_pipeline")
+    except ImportError:
+        pass
+
+    # Candidate 3: HEYAVATAR_LIVE_PORTRAIT_SRC → add to sys.path, retry.
     extra = os.environ.get("HEYAVATAR_LIVE_PORTRAIT_SRC")
     if extra:
-        sys.path.insert(0, extra)
+        # Support both "LivePortrait" (repo root) and "LivePortrait/src"
+        # spellings by checking what the path actually contains.
+        extra_path = Path(extra).resolve()
+        if extra_path.name == "src" and (extra_path.parent / "src").is_dir():
+            # User pointed at the src/ directory — use the parent as the
+            # package root so `import src.live_portrait_pipeline` works.
+            package_root = str(extra_path.parent)
+        else:
+            package_root = str(extra_path)
+        if package_root not in sys.path:
+            sys.path.insert(0, package_root)
         try:
-            return importlib.import_module("live_portrait_pipeline")
+            return importlib.import_module("src.live_portrait_pipeline")
         except ImportError as exc:
             LOG.warning(
-                "HEYAVATAR_LIVE_PORTRAIT_SRC=%s did not expose live_portrait_pipeline: %s",
+                "HEYAVATAR_LIVE_PORTRAIT_SRC=%s did not expose src.live_portrait_pipeline: %s",
                 extra,
                 exc,
             )
+
     return None
 
 
@@ -220,13 +246,17 @@ class LivePortraitAdapter(AvatarEngine):
                 return
 
             inf_upstream = _to_upstream_inference_config(
-                upstream, self.inf_cfg
+                upstream, self.inf_cfg, self.checkpoints
             )
-            crop_upstream = _to_upstream_crop_config(upstream, self.crop_cfg)
-            self._pipeline = upstream.LivePortraitPipeline(
-                inference_cfg=inf_upstream, crop_cfg=crop_upstream
+            # We construct the LivePortraitWrapper directly instead of
+            # the full LivePortraitPipeline because the latter includes
+            # a Cropper that requires InsightFace models we don't manage.
+            # Our adapter only uses the wrapper (appearance / motion /
+            # warping / spade / stitching modules), never the cropper.
+            self._wrapper = upstream.LivePortraitWrapper(
+                inference_cfg=inf_upstream
             )
-            self._wrapper = _get_wrapper(self._pipeline)
+            self._pipeline = None  # not used; kept for type compat
             self._loaded_at = time.monotonic()
             self._state = EngineState.IDLE
             self.mark_loaded()
@@ -685,12 +715,20 @@ class LivePortraitAdapter(AvatarEngine):
 # ---------------------------------------------------------------------------
 
 
-def _to_upstream_inference_config(upstream: Any, local: InferenceConfig) -> Any:
+def _to_upstream_inference_config(
+    upstream: Any,
+    local: InferenceConfig,
+    checkpoints: CheckpointManager,
+) -> Any:
     """Translate our :class:`InferenceConfig` to the upstream dataclass.
 
     Falls back to upstream's default constructor when the upstream
     class isn't importable; the *required* fields are forwarded and
     ``extra`` is deep-copied.
+
+    Checkpoint paths are resolved from ``checkpoints`` so the upstream
+    code always loads weights from our managed cache rather than its
+    own ``pretrained_weights/`` defaults.
     """
     try:
         cls = getattr(upstream, "InferenceConfig", None)
@@ -702,6 +740,13 @@ def _to_upstream_inference_config(upstream: Any, local: InferenceConfig) -> Any:
             device_id=local.device_id,
             source_division=local.source_division,
             mask_crop=str(local.mask_crop) if local.mask_crop else None,
+            # Point the upstream wrapper at our managed checkpoint cache
+            # so it never depends on the upstream pretrained_weights/ layout.
+            checkpoint_F=str(checkpoints.local_path_for("appearance_feature_extractor.pth").resolve()),
+            checkpoint_M=str(checkpoints.local_path_for("motion_extractor.pth").resolve()),
+            checkpoint_G=str(checkpoints.local_path_for("spade_generator.pth").resolve()),
+            checkpoint_W=str(checkpoints.local_path_for("warping_module.pth").resolve()),
+            checkpoint_S=str(checkpoints.local_path_for("stitching_retargeting_module.pth").resolve()),
         )
     except Exception as exc:  # noqa: BLE001
         LOG.warning("Could not build upstream InferenceConfig, falling back to dict: %s", exc)
