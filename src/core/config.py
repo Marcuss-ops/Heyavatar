@@ -57,6 +57,21 @@ class Settings:
     s3_endpoint_url: Optional[str] = None
     s3_bucket: Optional[str] = None
 
+    # Observability
+    # OTLP exporter endpoint (gRPC), e.g. ``http://otel-collector:4317``.
+    # Empty / starting with "off" disables tracing entirely so the
+    # rest of the codebase can run without the SDK installed.
+    otel_endpoint: str = ""
+    # ``HEYAVATAR_PROCESS_ROLE`` is auto-exported as a span resource
+    # attribute and a Prometheus ``process_info`` label.
+    process_role: str = "api"  # overwritten to "worker" by gpu_worker.main()
+    # Workers expose their Prometheus ``/metrics`` on this port. Set
+    # to ``0`` to disable and rely on push-gateway instead.
+    worker_metrics_port: int = 9100
+    # Update ``process_info`` and route-scoped Prometheus metrics
+    # even on the API process (default true).
+    api_metrics_enabled: bool = True
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -77,6 +92,10 @@ class Settings:
             object_store_backend=os.environ.get("HEYAVATAR_OBJECT_STORE_BACKEND", "fs"),
             s3_endpoint_url=os.environ.get("HEYAVATAR_S3_ENDPOINT"),
             s3_bucket=os.environ.get("HEYAVATAR_S3_BUCKET"),
+            otel_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+            process_role=os.environ.get("HEYAVATAR_PROCESS_ROLE", "api"),
+            worker_metrics_port=_env_int("HEYAVATAR_WORKER_METRICS_PORT", 9100),
+            api_metrics_enabled=_env_bool("HEYAVATAR_API_METRICS_ENABLED", True),
         )
 
 

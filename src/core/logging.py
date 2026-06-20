@@ -34,4 +34,18 @@ def configure_logging(settings: Settings | None = None) -> None:
         )
 
 
-__all__ = ["configure_logging"]
+def get_logger(name: str | None = None):
+    """Return a per-module Loguru logger.
+
+    Mirrors the stdlib ``logging.getLogger`` API so module-level
+    ``LOG = get_logger(__name__)`` keeps working across the project
+    without the import dance. ``name`` is forwarded as the loguru
+    ``name`` extra so messages can be filtered by module.
+    """
+    return _loguru.bind(name=name) if name else _loguru
+
+
+__all__ = ["configure_logging", "get_logger"]
+
+
+

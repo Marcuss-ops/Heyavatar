@@ -41,3 +41,29 @@ knobs:
     type: boolean
     default: true
     description: Composite rendered face back onto the source background.
+
+# Upstream release tracking — keep `version` in sync with the GitHub
+# release pinned by `checkpoint_manager.py` and bump `release_url`
+# after every upstream release you adopt.
+upstream_release:
+  version: v1.0
+  release_url: https://github.com/KlingAIResearch/LivePortrait/releases/tag/v1.0
+  pip_source_repo: https://github.com/KlingAIResearch/LivePortrait
+  contract_version: liveportrait-v1
+
+# Checkpoint expectations — see `providers/liveportrait/checkpoint_manager.py`
+# for the authoritative list and the SHA pin placeholders.
+checkpoint_files:
+  - appearance_feature_extractor.safetensors
+  - motion_extractor.safetensors
+  - warping_module.safetensors
+  - stitching_retargeting_module.safetensors
+  - spade_generator.safetensors
+
+# Conditional commercial use depending on third-party detector
+# replacement. See docs/MODEL_LICENSES.md § Replacing InsightFace.
+commercial_clearance:
+  requires:
+    - mediapipe-face-landmarker installed and used at runtime
+    - sha256 pins populated in providers/liveportrait/checkpoint_manager.py
+  clears_after: docs/MODEL_LICENSES.md §LivePortrait obligations

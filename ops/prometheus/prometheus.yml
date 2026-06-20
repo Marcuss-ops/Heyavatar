@@ -1,0 +1,51 @@
+# Prometheus scrape configuration for Heyavatar.
+#
+# Topology:
+#   - API pod: 1 /metrics target on port 8000 (FastAPI app).
+#   - Worker pods: one /metrics target per worker on port HEYAVATAR_WORKER_METRICS_PORT (default 9100).
+#   - Optional: 1 Prometheus push-gateway if you prefer push over pull.
+#
+# Drop this file into your Prometheus deployment alongside
+# `ops/grafana/dashboards/heyavatar.json` to monitor the headline
+# metric ``heyavatar_gpu_seconds_per_minute_of_output`` derived
+# from `rate(heyavatar_gpu_seconds_total[5m]) / rate(heyavatar_output_minutes_total[5m])`.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: heyavatar
+
+scrape_configs:
+  - job_name: heyavatar-api
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ["heyavatar-api:8000"]
+        labels:
+          process_role: api
+
+  - job_name: heyavatar-gpu-workers
+    metrics_path: /metrics
+    scheme: http
+    # Scrape each worker via Kubernetes-style DNS so that scaling the
+    # worker Deployment automatically registers new targets.
+    dns_sd_configs:
+      - names:
+          - heyavatar-worker-muse
+          - heyavatar-worker-liveportrait
+          - heyavatar-worker-echomimic
+        type: A
+        port: 9100
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: worker_host
+      - source_labels: [__meta_dns_name]
+        target_label: worker_dns
+
+  # OTLP collector ships its own metrics from the workers; we include
+  # the collector's own ``otelcol_exporter_*`` metrics so you can alert
+  # if traces start dropping.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
