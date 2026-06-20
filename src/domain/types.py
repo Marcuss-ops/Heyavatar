@@ -39,6 +39,7 @@ class RenderSpec:
     fps: int = 25
     target_resolution: tuple[int, int] = (512, 512)
     background_path: Optional[Path] = None
+    face_region_only: bool = False  # output face crop at native 256×256, skip upscale/pasteback
 
 
 @dataclass(slots=True, frozen=True)
@@ -77,6 +78,7 @@ class RenderChunkRequest:
     resolution: tuple[int, int] = (512, 512)
     chunk_index: int = 0
     overlap_seconds: float = 0.0
+    face_region_only: bool = False  # render face crop only, save VRAM
 
 
 @dataclass(slots=True, frozen=True)

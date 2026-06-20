@@ -28,7 +28,9 @@ from src.domain.types import AvatarPackManifest, IdentityId
 
 
 PACK_VERSION = 1
-PACK_ENTRY_REQUIRED = (
+# Default required entries (LivePortrait shape). Callers can override
+# via ``required_entries`` when an engine stores a different bundle.
+PACK_ENTRY_REQUIRED_DEFAULT = (
     "manifest.json",
     "source_features.bin",
     "canonical_keypoints.bin",
@@ -67,12 +69,18 @@ def write_pack(
     assets: dict,
     safe_motion_ranges: Optional[dict] = None,
     engine_compatibility: Iterable[str] = (),
+    required_entries: Iterable[str] = PACK_ENTRY_REQUIRED_DEFAULT,
 ) -> AvatarPack:
-    """Create a new pack from a dictionary of {entry_name: bytes/str | Path} and return it."""
+    """Create a new pack from a dictionary of {entry_name: bytes/str | Path} and return it.
+
+    *required_entries* can be overridden per engine; MuseTalk passes its
+    own bundle (“source_latent.bin” instead of “source_features.bin”).
+    """
     # Validate required entries *before* touching the filesystem so callers
     # receive one clear error rather than a half-written archive.
+    required = tuple(required_entries)
     provided = {name for name in assets if not name.startswith("_")}
-    missing = [name for name in PACK_ENTRY_REQUIRED
+    missing = [name for name in required
                if name != "manifest.json" and name not in provided]
     if missing:
         raise KeyError(
@@ -152,7 +160,7 @@ def verify_pack(archive_path: Path) -> List[str]:
         pack = read_pack(archive_path)
     except (FileNotFoundError, ValueError, tarfile.TarError) as exc:
         return [f"unreadable: {exc}"]
-    missing = [name for name in PACK_ENTRY_REQUIRED if name not in pack.manifest.entry_files
+    missing = [name for name in PACK_ENTRY_REQUIRED_DEFAULT if name not in pack.manifest.entry_files
                and name != "manifest.json"]
     with tarfile.open(archive_path, mode="r") as tf:
         names = set(tf.getnames())

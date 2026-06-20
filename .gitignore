@@ -72,6 +72,9 @@ models_cache/
 *.wav
 *.mp3
 
+# Test capture artifacts
+captures/
+
 # Avatar Packs (heavy per-identity bundles)
 avatar_packs/
 packs/

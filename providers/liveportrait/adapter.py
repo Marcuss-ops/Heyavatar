@@ -43,8 +43,6 @@ and the action required to flip ``commercial_use`` to true.
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import time
 import wave
 from dataclasses import dataclass, field
@@ -72,6 +70,15 @@ from providers.liveportrait.audio_bridge import (
     envelopes_to_driving,
     N_KEYPOINTS,
     EXPRESSION_DIM,
+)
+from providers._ffmpeg import (
+    FACE_REGION_RESOLUTION,
+    _json_dump,
+    _read_pack_entry,
+    _seed_from_path,
+    _to_uint8_hwc,
+    _write_dummy_mp4,
+    _write_frames_to_mp4,
 )
 from providers.liveportrait.checkpoint_manager import CheckpointManager
 from providers.liveportrait.inference_config import (
@@ -158,6 +165,7 @@ class LivePortraitAdapter(AvatarEngine):
     checkpoints: CheckpointManager = field(default_factory=CheckpointManager)
     inf_cfg: InferenceConfig = field(default_factory=InferenceConfig)
     crop_cfg: CropConfig = field(default_factory=CropConfig)
+    render_batch_size: int = 8  # frames per GPU kernel launch
 
     # Private lifecycle references (all ``None`` until ``load()``).
     _loaded_at: Optional[float] = field(default=None, init=False, repr=False)
@@ -486,7 +494,8 @@ class LivePortraitAdapter(AvatarEngine):
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"chunk_{request.chunk_index:04d}.mp4"
         colour = "0x111111" if not degraded else "0x330000"
-        _write_dummy_mp4(out_path, duration=duration, fps=request.fps, colour=colour)
+        resolution = FACE_REGION_RESOLUTION if request.face_region_only else (512, 512)
+        _write_dummy_mp4(out_path, duration=duration, fps=request.fps, colour=colour, resolution=resolution)
         return RenderChunkResult(
             chunk_index=request.chunk_index,
             output_path=out_path,
@@ -524,51 +533,71 @@ class LivePortraitAdapter(AvatarEngine):
         warped_frames = []
         per_frame_seconds = 0.0
         t_start = time.monotonic()
-        try:
-            warping = getattr(self._wrapper, "warping_module", None)
-            stitching = getattr(self._wrapper, "stitching_retargeting_module", None)
-            if warping is None:
-                raise RuntimeError(
-                    "LivePortrait wrapper does not expose warping_module; "
-                    "check upstream version."
-                )
-            exp_d = np.asarray(
-                driving.exp_d_flat, dtype=np.float32
-            ).reshape(env.frames, N_KEYPOINTS, EXPRESSION_DIM)
-            exp_d_t = torch.as_tensor(
-                exp_d, dtype=torch.float32, device=self._torch_device
+
+        warping = getattr(self._wrapper, "warping_module", None)
+        stitching = getattr(self._wrapper, "stitching_retargeting_module", None)
+        if warping is None:
+            raise RuntimeError(
+                "LivePortrait wrapper does not expose warping_module; "
+                "check upstream version."
             )
-            # Per the thinker's caveat, the real upstream does
-            #  kp_d = scale * (x_s @ R + delta) + t
-            # which we approximate by zeroing pose offsets so the
-            # expression-only deltas propagate.
-            kp_d_np = np.asarray(kp_d, dtype=np.float32)
-            for i in range(env.frames):
-                kp_d_t = torch.as_tensor(
-                    kp_d_np[i : i + 1], dtype=torch.float32, device=self._torch_device
-                )
-                # Upstream stitching returns REFINED DRIVING KEYPOINTS,
-                # not a stitched frame. Apply the refinement before
-                # warping so the upper/lower-face blend is correct.
-                if stitching is not None and hasattr(stitching, "stitching"):
-                    kp_d_t = stitching.stitching(kp_s, kp_d_t)
-                frame = warping.warp_decode(
-                    f_s,
-                    kp_s,
-                    kp_d_t,
-                )
+
+        exp_d = np.asarray(
+            driving.exp_d_flat, dtype=np.float32
+        ).reshape(env.frames, N_KEYPOINTS, EXPRESSION_DIM)
+        kp_d_np = np.asarray(kp_d, dtype=np.float32)
+
+        # ── batched render loop ─────────────────────────────────
+        # Stack driving keypoints into batches to saturate Tensor
+        # Cores. Each batch passes through warp_decode in one GPU
+        # kernel launch, reducing driver overhead by ~batch_size×.
+        batch = self.render_batch_size
+        for batch_start in range(0, env.frames, batch):
+            batch_end = min(batch_start + batch, env.frames)
+            batch_slice = slice(batch_start, batch_end)
+
+            # Stack driving keypoints: [batch, 1, 21, 3]
+            kp_d_batch = torch.as_tensor(
+                kp_d_np[batch_slice],
+                dtype=torch.float32,
+                device=self._torch_device,
+            )
+
+            # Stitching refines driving keypoints per-frame; apply
+            # per-frame then stack if upstream supports it.
+            if stitching is not None and hasattr(stitching, "stitching"):
+                refined = []
+                for j in range(batch_end - batch_start):
+                    kp_d_single = kp_d_batch[j : j + 1]
+                    refined.append(stitching.stitching(kp_s, kp_d_single))
+                kp_d_batch = torch.cat(refined, dim=0)
+
+            # Repeat source features AND source keypoints across batch
+            # dimension so upstream warp_decode sees consistent shapes.
+            batch_n = batch_end - batch_start
+            f_s_batch = f_s.expand(batch_n, -1, -1, -1, -1)
+            kp_s_batch = kp_s.expand(batch_n, -1, -1)
+
+            # Single GPU kernel launch for the entire batch.
+            batch_output = warping.warp_decode(f_s_batch, kp_s_batch, kp_d_batch)
+
+            # Collect frames back.
+            for j in range(batch_end - batch_start):
+                frame = batch_output[j : j + 1]
                 warped_frames.append(_to_uint8_hwc(frame))
-        finally:
-            per_frame_seconds = time.monotonic() - t_start
+
+        per_frame_seconds = time.monotonic() - t_start
 
         out_dir = self.settings.capture_dir / request.job_id
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"chunk_{request.chunk_index:04d}.mp4"
+        # Face-region-only: skip any pasteback/upscale, output at 256×256.
+        output_resolution = FACE_REGION_RESOLUTION if request.face_region_only else request.resolution
         _write_frames_to_mp4(
             warped_frames,
             out_path,
             fps=request.fps,
-            target_resolution=request.resolution,
+            target_resolution=output_resolution,
         )
         duration = max(0.5, clipped_end - request.audio_window[0])
         gpu_seconds = max(per_frame_seconds, 0.012 * duration)
@@ -773,11 +802,6 @@ def _build_driving_keypoints(
     return base + delta
 
 
-def _to_uint8_hwc(tensor: Any) -> np.ndarray:
-    """Convert a torch tensor ``[1, 3, H, W]`` to numpy ``[H, W, 3]``."""
-    arr = tensor.detach().cpu().numpy()[0]
-    arr = arr.transpose(1, 2, 0)
-    return (arr * 255).clip(0, 255).astype(np.uint8) if arr.dtype != np.uint8 else arr
 
 
 def _pool_embedding(f_s: Any) -> np.ndarray:
@@ -791,136 +815,3 @@ def _pool_embedding(f_s: Any) -> np.ndarray:
     return flat[::stride][:512]
 
 
-# ---------------------------------------------------------------------------
-# ffmpeg wrappers (mp4 encoding). The mock-mode path also uses _write_dummy_mp4.
-# ---------------------------------------------------------------------------
-
-
-def _write_dummy_mp4(
-    path: Path,
-    *,
-    duration: float,
-    fps: int,
-    colour: str = "0x111111",
-) -> None:
-    """Write a synthetic ``.mp4`` (used in mock mode + DEGRADED fallback).
-
-    Requires ffmpeg on PATH. Raises descriptive ``RuntimeError`` if
-    the encoder is unavailable or fails so the contract test stays
-    precise about its environmental needs.
-    """
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise RuntimeError(
-            "_write_dummy_mp4 requires ffmpeg to produce a valid mp4 stub. "
-            "Install it (brew install ffmpeg / apt install ffmpeg) or "
-            "run tests in an environment that bundles it."
-        )
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-loglevel", "error",
-        "-f", "lavfi",
-        "-i", f"color=c={colour}:s=512x512:r={fps}",
-        "-t", f"{duration:.3f}",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        str(path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg failed to produce mock chunk at {path}: {result.stderr.strip()}"
-        )
-
-
-def _write_frames_to_mp4(
-    frames: list,
-    path: Path,
-    *,
-    fps: int,
-    target_resolution: Tuple[int, int],
-) -> None:
-    """Encode a list of ``[H, W, 3]`` numpy uint8 frames to a single mp4.
-
-    Uses libx264 for portability. Production should swap in NVDEC
-    input + NVENC output via ffmpeg's ``-hwaccel`` flags; the
-    orchestrator can opt into that path by setting
-    ``HEYAVATAR_LIVE_PORTRAIT_FFMPEG_HWACCEL=1``.
-    """
-    if not frames:
-        _write_dummy_mp4(path, duration=0.5, fps=fps)
-        return
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise RuntimeError(
-            "_write_frames_to_mp4 requires ffmpeg; install it or run mock."
-        )
-    width, height = target_resolution
-    pipe_cmd = [
-        ffmpeg,
-        "-y",
-        "-loglevel", "error",
-        "-f", "rawvideo",
-        "-pix_fmt", "rgb24",
-        "-s", f"{width}x{height}",
-        "-r", str(fps),
-        "-i", "-",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        str(path),
-    ]
-    process = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE,
-                               stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE)
-    try:
-        for f in frames:
-            if f.shape[:2] != (height, width):
-                # best-effort nearest-neighbour resize via PIL
-                try:
-                    from PIL import Image  # type: ignore
-
-                    im = Image.fromarray(f).resize((width, height))
-                    f = np.asarray(im)
-                except Exception:  # noqa: BLE001
-                    f = f[:height, :width]
-            process.stdin.write(f.tobytes())
-            # Force the kernel buffer to flush so ffmpeg reads the
-            # frame promptly even for large chunks.
-            try:
-                process.stdin.flush()
-            except (AttributeError, ValueError):
-                pass
-        process.stdin.close()
-        rc = process.wait()
-        if rc != 0:
-            err = process.stderr.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"ffmpeg failed encoding to {path}: {err}")
-    finally:
-        if process.poll() is None:
-            process.kill()
-
-
-def _read_pack_entry(pack_path: Path, name: str) -> bytes:
-    """Read a single entry from a tar Avatar Pack; raise KeyError if absent."""
-    import tarfile
-
-    with tarfile.open(pack_path, mode="r") as tf:
-        try:
-            member = tf.getmember(name)
-        except KeyError as exc:
-            raise KeyError(f"Pack entry '{name}' missing in {pack_path}") from exc
-        data = tf.extractfile(member)
-        if data is None:
-            raise KeyError(f"Pack entry '{name}' is not a regular file")
-        return data.read()
-
-
-def _json_dump(d: Dict[str, Any]) -> bytes:
-    import json
-
-    return json.dumps(d, indent=2).encode("utf-8")
-
-
-def _seed_from_path(path: Path) -> int:
-    return int.from_bytes(path.read_bytes()[:8].ljust(8, b"\0"), "little")

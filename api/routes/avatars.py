@@ -1,30 +1,34 @@
-"""Avatar endpoints: compile (post) and list (get)."""
+"""Avatar endpoints: compile (post) and list (get).
+
+Avatar compilation is dispatched as a queue job so the GPU worker
+(not the FastAPI gateway) loads the engine. The ``POST /avatars/compile``
+returns a ``job_id`` that the caller polls via ``GET /jobs/{job_id}``.
+"""
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
 
 from api.schemas.avatars import AvatarCompileRequest, AvatarCompileResponse, AvatarSummary
-from contracts.avatar_engine import AvatarEngine
-from providers import get_provider
-from src.application.compile_avatar import AvatarCompiler
+from contracts.job_queue import JobState, RenderJob
 from src.domain.enums import EngineId, Tier
 from src.domain.avatar_pack import read_pack
-from src.domain.types import IdentitySpec
+from src.domain.types import RenderJobId
 
 router = APIRouter(prefix="/avatars", tags=["avatars"])
 
 
 @router.post("/compile", response_model=AvatarCompileResponse,
-             status_code=status.HTTP_201_CREATED)
+             status_code=status.HTTP_202_ACCEPTED)
 def compile_avatar(payload: AvatarCompileRequest, request: Request) -> AvatarCompileResponse:
     state = request.app.state.deps
     engine_id = EngineId.from_string(payload.engine_id) if payload.engine_id else None
     if engine_id is None:
-        # Default to the registry's tier express engine
         engine_id = EngineId.MUSE_TALK
     source = Path(payload.source_image)
     if not source.is_file():
@@ -32,25 +36,49 @@ def compile_avatar(payload: AvatarCompileRequest, request: Request) -> AvatarCom
             status_code=400,
             detail=f"source_image not found at {source}",
         )
-    engine = get_provider(engine_id)
-    engine.load()
+    job_id = RenderJobId(f"job-compile-{uuid.uuid4().hex[:16]}")
+    queue_payload = {
+        "job_type": "compile",
+        "engine_id": engine_id.value,
+        "source_image": str(source.resolve()),
+        "display_name": payload.display_name or "",
+        "language_hint": payload.language_hint or "",
+    }
     try:
-        compiler = AvatarCompiler(engine=engine, pack_root=state.pack_repo.root)
-        spec = IdentitySpec(
-            source_image=source,
-            display_name=payload.display_name,
-            language_hint=payload.language_hint,
+        from src.observability.context import inject_traceparent
+        queue_payload = inject_traceparent(queue_payload)
+    except ImportError:
+        pass
+    try:
+        from src.observability.tracing import get_tracer
+        tracer = get_tracer("api.avatars")
+        with tracer.start_as_current_span("api.compile_avatar", attributes={
+            "heyavatar.job_id": str(job_id),
+            "heyavatar.engine_id": engine_id.value,
+        }):
+            job = RenderJob(
+                id=job_id,
+                state=JobState.PENDING,
+                payload=queue_payload,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            state.queue.publish(job)
+            state.job_repo.upsert(job)
+    except ImportError:
+        job = RenderJob(
+            id=job_id,
+            state=JobState.PENDING,
+            payload=queue_payload,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
-        handle = compiler.compile(spec)
-    finally:
-        engine.unload()
-    state.pack_repo.save(handle.identity_id, read_pack(handle.pack_path))
+        state.queue.publish(job)
+        state.job_repo.upsert(job)
     return AvatarCompileResponse(
-        identity_id=handle.identity_id,
+        job_id=job_id,
         engine_id=engine_id,
-        pack_path=str(handle.pack_path),
-        pack_digest=handle.pack_digest,
-        prepared_at=handle.prepared_at,
+        state=JobState.PENDING,
     )
 
 

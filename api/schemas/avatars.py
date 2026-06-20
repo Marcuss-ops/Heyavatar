@@ -7,8 +7,9 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from contracts.job_queue import JobState
 from src.domain.enums import EngineId
-from src.domain.types import IdentityId
+from src.domain.types import IdentityId, RenderJobId
 
 
 class AvatarCompileRequest(BaseModel):
@@ -21,11 +22,9 @@ class AvatarCompileRequest(BaseModel):
 
 
 class AvatarCompileResponse(BaseModel):
-    identity_id: IdentityId
+    job_id: RenderJobId
     engine_id: EngineId
-    pack_path: str
-    pack_digest: str
-    prepared_at: datetime
+    state: JobState
 
 
 class AvatarSummary(BaseModel):

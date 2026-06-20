@@ -49,11 +49,16 @@ def test_provider_passes_contract(workdir, engine_id, tmp_path):
         # Round-trip through a pack to mimic production flow.
         pack_path = workdir / "packs" / f"{identity_id_for(adapter, source)}.tar"
         pack_path.parent.mkdir(parents=True, exist_ok=True)
+        # Respect the engine's own required-entries declaration so
+        # engines that store a different bundle (e.g. MuseTalk's
+        # VAE-latent-only pack) pass the contract test.
+        required = getattr(adapter, "pack_required_entries", None)
         pack = write_pack(
             archive_path=pack_path,
             identity_id=identity_id_for(adapter, source),
             assets=assets,
             engine_compatibility=(adapter.engine_id.value,),
+            required_entries=required if required is not None else (),
         )
         handle = AvatarIdentityHandle(
             identity_id=pack.manifest.identity_id,

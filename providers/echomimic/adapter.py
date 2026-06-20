@@ -23,7 +23,8 @@ from src.domain.types import (
     RenderChunkRequest,
     RenderChunkResult,
 )
-from providers.liveportrait.adapter import LivePortraitAdapter, _seed_from_path, _write_dummy_mp4
+from providers.liveportrait.adapter import LivePortraitAdapter
+from providers._ffmpeg import _seed_from_path, _write_dummy_mp4
 
 
 @dataclass(slots=True)

@@ -57,11 +57,19 @@ class AvatarCompiler:
         assets: dict = dict(intermediates)
         assets["_source_image_sha256"] = hashlib.sha256(spec.source_image.read_bytes()).hexdigest()
 
+        # Per-engine required entries: each adapter can declare
+        # ``pack_required_entries`` as a class-level tuple.
+        required = getattr(self.engine, "pack_required_entries", None)
         pack = write_pack(
             archive_path=pack_path,
             identity_id=identity_id,
             assets=assets,
             engine_compatibility=(engine_id_value, *(compatibility or ())),
+            required_entries=required
+            if required is not None
+            else ("manifest.json", "source_features.bin", "canonical_keypoints.bin",
+                  "face_mask.png", "face_crop.png", "identity_embedding.bin",
+                  "source_latent.bin"),
         )
 
         return AvatarIdentityHandle(

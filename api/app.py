@@ -20,7 +20,7 @@ from src.core.config import Settings, get_settings
 from src.core.logging import configure_logging
 from src.scheduler.queue import InMemoryJobQueue, NullJobQueue, RedisJobQueue
 from src.storage.avatar_packs import AvatarPackRepository
-from src.storage.jobs import InMemoryJobRepository
+from src.storage.jobs import InMemoryJobRepository, RedisJobRepository
 from src.storage.object_store import build_object_store
 
 from api.auth.api_key import require_api_key
@@ -32,7 +32,7 @@ class AppState:
     settings: Settings
     queue: object
     pack_repo: AvatarPackRepository
-    job_repo: InMemoryJobRepository
+    job_repo: InMemoryJobRepository | RedisJobRepository
     object_store: object
 
 
@@ -50,11 +50,16 @@ def _build_queue(settings: Settings):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     settings = get_settings()
+    job_repo = (
+        RedisJobRepository(url=settings.redis_url)
+        if settings.queue_backend == "redis" and settings.redis_url
+        else InMemoryJobRepository()
+    )
     state = AppState(
         settings=settings,
         queue=_build_queue(settings),
         pack_repo=AvatarPackRepository(root=settings.pack_dir),
-        job_repo=InMemoryJobRepository(),
+        job_repo=job_repo,
         object_store=build_object_store(settings),
     )
     app.state.deps = state

@@ -1,4 +1,4 @@
-"""End-to-end smoke test: compile + render one chunk through the mock engine."""
+"""End-to-end smoke test: compile + render chunks + encode through mock engine."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from providers import get_provider
 from src.application.compile_avatar import AvatarCompiler
 from src.application.render_video import ChunkConfig, RenderVideo
 from src.application.telemetry import TelemetryRecorder
-from src.domain.avatar_pack import read_pack
+from src.core.config import get_settings
 from src.domain.enums import EngineId
 from src.domain.types import RenderJobId, RenderRequest, RenderSpec, IdentitySpec
 from tests._fixtures import PNG_1X1 as _PNG_1x1
@@ -51,5 +51,15 @@ def test_end_to_end_compile_and_one_chunk(workdir, tmp_path):
         # Telemetry recorder has entries.
         snap = rv.telemetry.snapshot()
         assert snap["inference_count"] >= 1 or snap["gpu_seconds_total"] >= 0
+        # The manifest was written.
+        assert result.output_path.is_file()
+        assert result.output_path.suffix == ".txt"
+
+        # ── encoding pass ──────────────────────────────────────
+        from workers.encoding_worker import EncodingWorker
+        encoder = EncodingWorker(settings=get_settings())
+        final = encoder.encode("job-smoke", result.output_path, audio_path=audio)
+        assert final.is_file()
+        assert final.suffix == ".mp4"
     finally:
         engine.unload()
