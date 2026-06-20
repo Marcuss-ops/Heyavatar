@@ -27,6 +27,7 @@ from src.core.logging import configure_logging, get_logger
 from src.domain.enums import EngineId
 from src.domain.types import (
     AvatarIdentityHandle,
+    IdentityId,
     IdentitySpec,
     RenderRequest,
     RenderSpec,
@@ -95,12 +96,16 @@ class GpuWorker:
                 _bump_inflight(self.engine_id.value, +1)
                 self._update_job_state(job.id, JobState.RUNNING)
                 try:
-                    self._process(job, engine, repo)
+                    final_state, result = self._process(job, engine, repo)
                     queue.acknowledge(job.id)
-                    self._update_job_state(job.id, JobState.COMPLETED)
+                    self._update_job_state(job.id, final_state, result=result)
                 except Exception as exc:  # pragma: no cover - defensive
                     queue.fail(job.id, reason=f"{type(exc).__name__}: {exc}")
-                    self._update_job_state(job.id, JobState.FAILED)
+                    self._update_job_state(
+                        job.id,
+                        JobState.FAILED,
+                        result={"error": str(exc)},
+                    )
                 finally:
                     _bump_inflight(self.engine_id.value, -1)
         finally:
@@ -109,15 +114,16 @@ class GpuWorker:
     def stop(self) -> None:
         self._stop = True
 
-    def _update_job_state(self, job_id, new_state: JobState) -> None:
+    def _update_job_state(self, job_id, new_state: JobState, *, result: Optional[dict] = None) -> None:
         if self.job_repo is None:
             return
         try:
-            self.job_repo.mark(job_id, new_state)
+            self.job_repo.mark(job_id, new_state, result=result)
         except Exception:
             pass
 
-    def _process(self, job: RenderJob, engine, repo: AvatarPackRepository) -> None:
+    def _process(self, job: RenderJob, engine, repo: AvatarPackRepository):
+        """Process a job and return (final_state, result_dict)."""
         # Lazy span: only import OTel if present. The tracer is named
         # ``workers.gpu_worker`` so an operator can pivot dashboards
         # by tracer name.
@@ -145,14 +151,15 @@ class GpuWorker:
                         "heyavatar.tier": str(job.payload.get("tier", "express")),
                     },
                 ):
-                    self._do_process(job, engine, repo)
+                    return self._do_process(job, engine, repo)
             finally:
                 if token is not None:
                     otel_context.detach(token)
         else:
-            self._do_process(job, engine, repo)
+            return self._do_process(job, engine, repo)
 
-    def _do_process(self, job: RenderJob, engine, repo: AvatarPackRepository) -> None:
+    def _do_process(self, job: RenderJob, engine, repo: AvatarPackRepository):
+        """Process a job and return (final_state, result_dict)."""
         payload = job.payload
         job_type = payload.get("job_type", "render")
 
@@ -174,22 +181,29 @@ class GpuWorker:
                 record_terminal(state="compiled", tier="express")
             except ImportError:
                 pass
-            return
+            return JobState.COMPLETED, {
+                "identity_id": str(handle.identity_id),
+                "engine_id": engine_id_value,
+                "pack_digest": handle.pack_digest,
+            }
 
         # ── render job ────────────────────────────────────────────
-        identity_id = payload["identity_id"]
-        handle = repo.get(_id_from_str(identity_id))
+        identity_id_str = payload["identity_id"]
+        handle = repo.get(_id_from_str(identity_id_str))
         if handle is None:
             spec = IdentitySpec(
                 source_image=Path(payload["source_image"]),
                 display_name=payload.get("display_name", ""),
             )
             compiler = AvatarCompiler(engine=engine, pack_root=repo.root)
-            handle = compiler.compile(spec)
-            repo.save(handle.identity_id, read_pack_from_archive(handle.pack_path))
+            compiled = compiler.compile(spec)
+            repo.save(compiled.identity_id, read_pack_from_archive(compiled.pack_path))
+            handle = repo.get(compiled.identity_id)
+            if handle is None:
+                raise RuntimeError(f"Failed to compile and persist identity for {identity_id_str}")
         request = RenderRequest(
             job_id=job.id,
-            identity_id=handle.identity_id,
+            identity_id=IdentityId(identity_id_str),
             identity_spec=IdentitySpec(source_image=Path(payload["source_image"])),
             render_spec=RenderSpec(
                 audio_path=Path(payload["audio_path"]),
@@ -202,9 +216,22 @@ class GpuWorker:
         # Per-chunk telemetry is published inside RenderVideo.run() —
         # no need to double-publish here. The headline metric
         # ``gpu_seconds_per_minute_of_output`` is computed in Prometheus.
+
+        # ── determine render state ─────────────────────────────
+        total_chunks = len(result.chunks)
+        degraded_count = len(result.degraded_chunks)
+        if degraded_count == total_chunks:
+            render_state = JobState.FAILED_INFERENCE
+            degraded = True
+        elif degraded_count > 0:
+            render_state = JobState.COMPLETED_DEGRADED
+            degraded = True
+        else:
+            render_state = JobState.COMPLETED
+            degraded = False
+
         # ── encoding pass ────────────────────────────────────────
-        # The GPU worker renders chunks; the encoding worker trims
-        # overlap, concats, and muxes audio into the final mp4.
+        final_path: Optional[Path] = None
         manifest_path = result.output_path
         if manifest_path.is_file():
             encoder = EncodingWorker(settings=self.settings)
@@ -216,7 +243,28 @@ class GpuWorker:
                 )
                 get_logger(__name__).info("encoded final video", extra={"path": str(final_path)})
             except Exception as exc:
-                get_logger(__name__).warning("encoding failed; chunks remain in captures", extra={"error": str(exc)})
+                get_logger(__name__).error("encoding failed", extra={"error": str(exc)})
+                return JobState.FAILED_ENCODING, {
+                    "identity_id": identity_id_str,
+                    "engine_id": self.engine_id.value,
+                    "duration_seconds": result.duration_seconds,
+                    "gpu_seconds": result.gpu_seconds_total,
+                    "degraded": degraded,
+                    "degraded_chunks": list(result.degraded_chunks),
+                    "total_chunks": total_chunks,
+                    "error": f"Encoding failed: {exc}",
+                }
+
+        return render_state, {
+            "identity_id": identity_id_str,
+            "output_path": str(final_path) if final_path else None,
+            "engine_id": self.engine_id.value,
+            "duration_seconds": result.duration_seconds,
+            "gpu_seconds": result.gpu_seconds_total,
+            "degraded": degraded,
+            "degraded_chunks": list(result.degraded_chunks),
+            "total_chunks": total_chunks,
+        }
 
 
 def _bump_inflight(engine_id: str, delta: int) -> None:

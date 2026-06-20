@@ -53,39 +53,41 @@ from typing import Dict, List, Optional
 from src.core.logging import get_logger
 
 
-# SHA256 pins. The values below are placeholders marked "TBD" pending
-# pinning against the official release page. The verification step
-# reads them at runtime and refuses to load weights whose hash does
-# not match. Operators MUST update these pins before turning off
-# ``HEYAVATAR_MOCK_ENGINE`` in production.
+# SHA256 pins. The values below are marked "TBD" pending first download.
+# HuggingFace LFS handles integrity verification on download; SHA256
+# pins provide an extra layer of security. To pin:
+#   1. Download the weights via `huggingface-cli download KlingTeam/LivePortrait`
+#   2. Run `sha256sum <file>` on each downloaded file
+#   3. Update the "sha256" field below.
+# Set HEYAVATAR_SKIP_SHA256_VERIFY=1 to skip SHA256 verification (for initial setup).
 CHECKPOINT_MANIFEST: List[Dict[str, object]] = [
     {
-        "name": "appearance_feature_extractor.safetensors",
-        "url": "https://github.com/KlingAIResearch/LivePortrait/releases/download/v1.0/appearance_feature_extractor.safetensors",
+        "name": "appearance_feature_extractor.pth",
+        "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/appearance_feature_extractor.pth",
         "sha256": "TBD",
         "size_bytes": 0,
     },
     {
-        "name": "motion_extractor.safetensors",
-        "url": "https://github.com/KlingAIResearch/LivePortrait/releases/download/v1.0/motion_extractor.safetensors",
+        "name": "motion_extractor.pth",
+        "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/motion_extractor.pth",
         "sha256": "TBD",
         "size_bytes": 0,
     },
     {
-        "name": "warping_module.safetensors",
-        "url": "https://github.com/KlingAIResearch/LivePortrait/releases/download/v1.0/warping_module.safetensors",
+        "name": "warping_module.pth",
+        "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/warping_module.pth",
         "sha256": "TBD",
         "size_bytes": 0,
     },
     {
-        "name": "stitching_retargeting_module.safetensors",
-        "url": "https://github.com/KlingAIResearch/LivePortrait/releases/download/v1.0/stitching_retargeting_module.safetensors",
+        "name": "stitching_retargeting_module.pth",
+        "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/retargeting_models/stitching_retargeting_module.pth",
         "sha256": "TBD",
         "size_bytes": 0,
     },
     {
-        "name": "spade_generator.safetensors",
-        "url": "https://github.com/KlingAIResearch/LivePortrait/releases/download/v1.0/spade_generator.safetensors",
+        "name": "spade_generator.pth",
+        "url": "https://huggingface.co/KlingTeam/LivePortrait/resolve/main/liveportrait/base_models/spade_generator.pth",
         "sha256": "TBD",
         "size_bytes": 0,
     },
@@ -178,10 +180,15 @@ class CheckpointManager:
             entry.verified = True
             return True
         if entry.expected_sha256 == "TBD":
-            # SHA not pinned yet — refuse to treat as verified so a
-            # downstream load will fail loudly during adapter init.
+            # SHA not pinned yet — if the operator allows it, treat
+            # the HF LFS download as sufficient verification.
+            if os.environ.get("HEYAVATAR_SKIP_SHA256_VERIFY") == "1":
+                entry.verified = True
+                return True
             get_logger(__name__).warning(
-                "LivePortrait checkpoint %s has no SHA256 pin; refusing to mark verified",
+                "LivePortrait checkpoint %s has no SHA256 pin; refusing to mark verified. "
+                "Set HEYAVATAR_SKIP_SHA256_VERIFY=1 to skip verification (for initial setup), "
+                "or compute the SHA256 hash after first download and update checkpoint_manager.py.",
                 entry.name,
             )
             return False

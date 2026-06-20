@@ -107,6 +107,7 @@ class RenderResult:
     gpu_seconds_total: float
     completed_at: datetime
     chunks: tuple[RenderChunkResult, ...]
+    degraded_chunks: tuple[int, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

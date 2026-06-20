@@ -104,22 +104,27 @@ def _import_musetalk_upstream() -> Any:
 # MuseTalkCheckpointManager — own checkpoint manifest for MuseTalk weights
 # ---------------------------------------------------------------------------
 
+# SHA256 values are "TBD" pending first download.
+# HuggingFace LFS handles integrity verification on download.
+# To pin: download via `huggingface-cli download TMElyralab/MuseTalk`,
+# run `sha256sum` on each file, update the "sha256" field below.
+# Set HEYAVATAR_SKIP_SHA256_VERIFY=1 to skip SHA256 verification (for initial setup).
 MUSETALK_CHECKPOINT_MANIFEST: list = [
     {
-        "name": "musetalk_unet.safetensors",
-        "url": "https://github.com/TMElyralab/MuseTalk/releases/download/v1.0/musetalk_unet.safetensors",
+        "name": "musetalk_unet.pth",
+        "url": "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/musetalkV15/unet.pth",
         "sha256": "TBD",
         "size_bytes": 0,
     },
     {
-        "name": "musetalk_vae.safetensors",
-        "url": "https://github.com/TMElyralab/MuseTalk/releases/download/v1.0/musetalk_vae.safetensors",
+        "name": "musetalk_vae.bin",
+        "url": "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/sd-vae/diffusion_pytorch_model.bin",
         "sha256": "TBD",
         "size_bytes": 0,
     },
     {
-        "name": "musetalk_whisper_tiny.pt",
-        "url": "https://github.com/TMElyralab/MuseTalk/releases/download/v1.0/musetalk_whisper_tiny.pt",
+        "name": "musetalk_whisper_tiny.bin",
+        "url": "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/whisper/pytorch_model.bin",
         "sha256": "TBD",
         "size_bytes": 0,
     },
@@ -181,6 +186,7 @@ class MuseTalkAdapter(AvatarEngine):
     render_batch_size: int = 8  # frames per GPU kernel launch
 
     # Private lifecycle references.
+    _loaded_at: Optional[float] = field(default=None, init=False, repr=False)
     _state: EngineState = field(default=EngineState.UNLOADED, init=False, repr=False)
     _torch_device: Any = field(default=None, init=False, repr=False)
     _pipeline: Any = field(default=None, init=False, repr=False)
@@ -526,8 +532,8 @@ class MuseTalkAdapter(AvatarEngine):
     def _vae_encode(self, face_tensor: Any, torch: Any) -> Any:
         """Encode face tensor through VAE to get source latent.
 
-        Uses upstream MuseTalk VAE if available, otherwise a mock
-        random latent for testing.
+        In mock mode, returns a deterministic random latent for
+        testability. In real mode, raises if VAE is unavailable.
         """
         if self._pipeline is not None:
             try:
@@ -537,12 +543,21 @@ class MuseTalkAdapter(AvatarEngine):
                     return mu
             except Exception as exc:
                 LOG.warning("VAE encode via upstream failed: %s", exc)
+                if not self.settings.mock_engine:
+                    raise RuntimeError(
+                        "MuseTalk VAE encode failed in real mode"
+                    ) from exc
 
-        # Fallback: random latent for testability.
-        LOG.warning("VAE not available; using random latent")
-        return torch.randn(
-            1, 4, 64, 64, device=self._torch_device, dtype=torch.float32
-        ) * 0.01
+        if self.settings.mock_engine:
+            LOG.warning("VAE not available; using random latent")
+            return torch.randn(
+                1, 4, 64, 64, device=self._torch_device, dtype=torch.float32
+            ) * 0.01
+
+        raise RuntimeError(
+            "MuseTalk VAE is unavailable in real mode. "
+            "Install upstream MuseTalk or set HEYAVATAR_MOCK_ENGINE=1."
+        )
 
     # ------------------------------------------------------------------
     # Real-mode chunk rendering
@@ -639,11 +654,16 @@ class MuseTalkAdapter(AvatarEngine):
             except Exception as exc:
                 LOG.warning("Whisper audio extraction failed: %s", exc)
 
-        # Fallback: random audio features for testability.
-        LOG.debug("Using random audio features (no Whisper available)")
-        return torch.randn(
-            num_frames, 384, device=self._torch_device, dtype=torch.float32
-        ) * 0.01
+        if self.settings.mock_engine:
+            LOG.debug("Using random audio features (no Whisper available)")
+            return torch.randn(
+                num_frames, 384, device=self._torch_device, dtype=torch.float32
+            ) * 0.01
+
+        raise RuntimeError(
+            "MuseTalk audio encoder (Whisper) is unavailable in real mode. "
+            "Install upstream MuseTalk or set HEYAVATAR_MOCK_ENGINE=1."
+        )
 
     def _unet_denoise(
         self,
@@ -701,14 +721,19 @@ class MuseTalkAdapter(AvatarEngine):
             except Exception as exc:
                 LOG.warning("UNet denoise failed: %s", exc)
 
-        # Fallback: source latent + per-frame noise.
-        LOG.debug("Using random rendered latents (no UNet available)")
-        num_frames = audio_features.shape[0]
-        return [
-            source_latent.clone()
-            + torch.randn_like(source_latent) * 0.05
-            for _ in range(num_frames)
-        ]
+        if self.settings.mock_engine:
+            LOG.debug("Using random rendered latents (no UNet available)")
+            num_frames = audio_features.shape[0]
+            return [
+                source_latent.clone()
+                + torch.randn_like(source_latent) * 0.05
+                for _ in range(num_frames)
+            ]
+
+        raise RuntimeError(
+            "MuseTalk UNet is unavailable in real mode. "
+            "Install upstream MuseTalk or set HEYAVATAR_MOCK_ENGINE=1."
+        )
 
     def _vae_decode_frames(
         self, latents: list, torch: Any
@@ -772,9 +797,15 @@ class MuseTalkAdapter(AvatarEngine):
                     frame = None
 
                 if frame is None:
-                    frame = np.random.randint(
-                        0, 255, (256, 256, 3), dtype=np.uint8
-                    )
+                    if self.settings.mock_engine:
+                        frame = np.random.randint(
+                            0, 255, (256, 256, 3), dtype=np.uint8
+                        )
+                    else:
+                        raise RuntimeError(
+                            "MuseTalk VAE decode failed in real mode. "
+                            "Check upstream MuseTalk installation."
+                        )
                 else:
                     frame = (frame * 255).clip(0, 255).astype(np.uint8)
                 frames.append(frame)

@@ -140,6 +140,7 @@ class RenderVideo:
             gpu_seconds_total=sum(r.gpu_seconds for r in results),
             completed_at=datetime.now(timezone.utc),
             chunks=tuple(results),
+            degraded_chunks=tuple(failed_chunks),
         )
 
     # ── per-chunk render with retry ────────────────────────────────

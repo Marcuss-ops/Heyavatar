@@ -47,7 +47,7 @@ class InMemoryJobRepository:
                 out[job.state.value] = out.get(job.state.value, 0) + 1
             return out
 
-    def mark(self, job_id: RenderJobId, state: JobState, *, error: Optional[str] = None) -> None:
+    def mark(self, job_id: RenderJobId, state: JobState, *, error: Optional[str] = None, result: Optional[Dict[str, Any]] = None) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -61,6 +61,7 @@ class InMemoryJobRepository:
                 attempts=job.attempts,
                 last_error=error or job.last_error,
                 reserved_by=job.reserved_by,
+                result=result if result is not None else job.result,
             )
 
 
@@ -95,24 +96,28 @@ class RedisJobRepository:
         return f"heyavatar:job:{job_id}"
 
     def upsert(self, job: RenderJob) -> None:
+        mapping = {
+            "job_id": job.id,
+            "state": job.state.value,
+            "payload": json.dumps(job.payload),
+            "created_at": job.created_at.isoformat(),
+            "updated_at": job.updated_at.isoformat(),
+            "attempts": str(job.attempts),
+            "last_error": job.last_error or "",
+            "reserved_by": job.reserved_by or "",
+        }
+        if job.result is not None:
+            mapping["result"] = json.dumps(job.result)
         self._redis.hset(
             self._hash_key(job.id),
-            mapping={
-                "job_id": job.id,
-                "state": job.state.value,
-                "payload": json.dumps(job.payload),
-                "created_at": job.created_at.isoformat(),
-                "updated_at": job.updated_at.isoformat(),
-                "attempts": str(job.attempts),
-                "last_error": job.last_error or "",
-                "reserved_by": job.reserved_by or "",
-            },
+            mapping=mapping,
         )
 
     def get(self, job_id: RenderJobId) -> Optional[RenderJob]:
         raw = self._redis.hgetall(self._hash_key(job_id))
         if not raw:
             return None
+        result_raw = raw.get("result")
         return RenderJob(
             id=RenderJobId(raw.get("job_id", job_id)),
             state=JobState(raw.get("state", "pending")),
@@ -122,9 +127,10 @@ class RedisJobRepository:
             attempts=int(raw.get("attempts", 0)),
             last_error=raw.get("last_error") or None,
             reserved_by=raw.get("reserved_by") or None,
+            result=json.loads(result_raw) if result_raw else None,
         )
 
-    def mark(self, job_id: RenderJobId, state: JobState, *, error: Optional[str] = None) -> None:
+    def mark(self, job_id: RenderJobId, state: JobState, *, error: Optional[str] = None, result: Optional[Dict[str, Any]] = None) -> None:
         # NOTE: read-modify-write is not atomic. If two processes call
         # ``mark()`` on the same job simultaneously, one update may be
         # lost. In the current single-worker-per-job model this race is
@@ -142,6 +148,7 @@ class RedisJobRepository:
             attempts=job.attempts,
             last_error=error or job.last_error,
             reserved_by=job.reserved_by,
+            result=result if result is not None else job.result,
         )
         self.upsert(updated)
 

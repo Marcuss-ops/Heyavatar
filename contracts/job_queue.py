@@ -21,7 +21,10 @@ class JobState(str, Enum):
     RESERVED = "reserved"
     RUNNING = "running"
     COMPLETED = "completed"
+    COMPLETED_DEGRADED = "completed_degraded"
     FAILED = "failed"
+    FAILED_INFERENCE = "failed_inference"
+    FAILED_ENCODING = "failed_encoding"
     CANCELLED = "cancelled"
 
 
@@ -47,8 +50,9 @@ class RenderJob:
     attempts: int = 0
     last_error: Optional[str] = None
     reserved_by: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
 
-    def with_state(self, new_state: JobState, *, error: Optional[str] = None) -> "RenderJob":
+    def with_state(self, new_state: JobState, *, error: Optional[str] = None, result: Optional[Dict[str, Any]] = None) -> "RenderJob":
         return RenderJob(
             id=self.id,
             state=new_state,
@@ -58,6 +62,7 @@ class RenderJob:
             attempts=self.attempts,
             last_error=error,
             reserved_by=self.reserved_by,
+            result=result if result is not None else self.result,
         )
 
 

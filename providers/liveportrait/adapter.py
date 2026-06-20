@@ -369,11 +369,13 @@ class LivePortraitAdapter(AvatarEngine):
             )
             return assets
         except Exception as exc:  # noqa: BLE001
-            LOG.error(
-                "Real-mode prepare_identity failed, returning mock assets: %s",
-                exc,
-            )
-            return self._mock_identity_assets(source_image)
+            if self.settings.mock_engine:
+                LOG.error(
+                    "Real-mode prepare_identity failed, returning mock assets: %s",
+                    exc,
+                )
+                return self._mock_identity_assets(source_image)
+            raise  # re-raise in real mode
 
     # ------------------------------------------------------------------
     # Chunk rendering — the GPU hot path
@@ -416,19 +418,26 @@ class LivePortraitAdapter(AvatarEngine):
         # dashboard notices.
         if self._state == EngineState.DEGRADED:
             LOG.warning(
-                "render_chunk invoked while DEGRADED; emitting fallback mp4. last_error=%s",
+                "render_chunk invoked while DEGRADED; last_error=%s",
                 self._last_error,
             )
-            return self._mock_render_chunk(request, clipped_end, degraded=True)
+            if self.settings.mock_engine:
+                return self._mock_render_chunk(request, clipped_end, degraded=True)
+            raise RuntimeError(
+                f"LivePortraitAdapter is DEGRADED; cannot render chunk. "
+                f"last_error={self._last_error}"
+            )
 
         try:
             return self._real_render_chunk(request, identity, clipped_end)
         except Exception as exc:  # noqa: BLE001
-            LOG.error(
-                "LivePortraitAdapter.render_chunk crashed: %s; falling back to mock mp4",
-                exc,
-            )
-            return self._mock_render_chunk(request, clipped_end, degraded=True)
+            if self.settings.mock_engine:
+                LOG.error(
+                    "LivePortraitAdapter.render_chunk crashed: %s; falling back to mock mp4",
+                    exc,
+                )
+                return self._mock_render_chunk(request, clipped_end, degraded=True)
+            raise  # re-raise in real mode so the job fails properly
 
     # ------------------------------------------------------------------
     # Health

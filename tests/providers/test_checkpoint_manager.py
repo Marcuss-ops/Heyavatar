@@ -24,8 +24,8 @@ def test_mock_mode_manifest_is_exposed() -> None:
     assert cm.mock_mode
     # The manifest lists the canonical upstream filenames.
     names = {e["name"] for e in CHECKPOINT_MANIFEST}
-    assert "appearance_feature_extractor.safetensors" in names
-    assert "motion_extractor.safetensors" in names
+    assert "appearance_feature_extractor.pth" in names
+    assert "motion_extractor.pth" in names
 
 
 def test_mock_mode_ensure_present_no_op(tmp_path: Path) -> None:

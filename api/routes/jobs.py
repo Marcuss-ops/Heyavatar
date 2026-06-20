@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from api.schemas.jobs import (
     JobResponse,
@@ -105,7 +105,7 @@ def get_job(job_id: str, request: Request) -> JobResponse:
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-def cancel_job(job_id: str, request: Request) -> None:
+def cancel_job(job_id: str, request: Request) -> Response:
     state = request.app.state.deps
     job_id_t = RenderJobId(job_id)
     state.queue.cancel(job_id_t)
@@ -115,3 +115,4 @@ def cancel_job(job_id: str, request: Request) -> None:
         record_terminal(state="cancelled", tier="express")
     except ImportError:
         pass
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
