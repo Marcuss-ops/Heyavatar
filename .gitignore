@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.ENV/
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Tests / coverage / type checks
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+
+# Logs and runtime artifacts
+*.log
+.env
+.env.local
+.cache/
+outputs/
+api_keys.txt
+
+# Models, checkpoints, vendor binaries
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.engine
+*.trt
+vendor/
+models_cache/
+
+# Rendered / produced media
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.wav
+*.mp3
+
+# Avatar Packs (heavy per-identity bundles)
+avatar_packs/
+packs/
+
+# Docs assets kept under version control are an explicit carve-out
+# !docs/assets/*.mp4

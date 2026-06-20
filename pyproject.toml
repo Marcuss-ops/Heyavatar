@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heyavatar"
+version = "0.2.0"
+description = "Avatar engine platform for AI talking-head and lip-sync video generation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Heyavatar Contributors" }]
+keywords = [
+    "ai",
+    "avatar",
+    "talking-head",
+    "lip-sync",
+    "video-generation",
+    "liveportrait",
+    "musetalk",
+    "fastapi",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "PyYAML>=6.0",
+    "numpy>=1.26",
+    "Pillow>=10.0",
+    "loguru>=0.7",
+    "httpx>=0.27",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+s3 = ["aioboto3>=12.0"]
+gpu = ["torch>=2.0", "torchvision"]
+
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+    "mypy>=1.7",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/Marcuss-ops/Heyavatar"
+Issues = "https://github.com/Marcuss-ops/Heyavatar/issues"
+
+[tool.setuptools.packages.find]
+include = ["api*", "src*", "providers*", "workers*", "contracts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true

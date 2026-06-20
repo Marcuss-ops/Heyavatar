@@ -1,0 +1,24 @@
+# Runtime dependencies for Heyavatar's avatar engine.
+# Mirrors pyproject.toml — keep in sync or rely solely on `pip install -e ".[dev]"`.
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+PyYAML>=6.0
+numpy>=1.26
+Pillow>=10.0
+loguru>=0.7
+httpx>=0.27
+tenacity>=8.2
+
+# Optional
+# redis>=5.0                       # pip install -e ".[redis]"
+# aioboto3>=12.0                   # pip install -e ".[s3]"
+# torch>=2.0                       # pip install -e ".[gpu]"
+
+# Dev / test
+# pytest>=7.4
+# pytest-asyncio>=0.23
+# pytest-cov>=4.1
+# ruff>=0.1
+# mypy>=1.7

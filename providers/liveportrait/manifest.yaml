@@ -1,0 +1,43 @@
+# LivePortrait provider manifest — kept in sync with `registry/models.yaml`.
+api_version: "engine.contract/v1"
+
+engine_id: liveportrait-human-v1
+display_name: LivePortrait (keypoint-based portrait animator)
+
+license:
+  code: MIT
+  weights: MIT
+  commercial_use: false   # see InsightFace detector in registry/models.yaml
+
+runtime:
+  python: ">=3.10"
+  cuda: ">=11.8,<13"
+  pytorch: ">=2.0,<2.5"
+  vram_min_mb: 6144
+  cpu_friendly: false
+
+# Inputs/outputs as the AvatarEngine contract sees them
+input:
+  source_image_required: true
+  audio_required: true
+  preview_video_required: false
+
+output:
+  container: mp4
+  codec: h264
+  resolution_policy: match_identity
+
+# Mock engine support
+supports_mock: true
+mock_env_var: HEYAVATAR_MOCK_ENGINE
+
+# Adapter-specific configuration knobs
+knobs:
+  - key: relative_motion
+    type: float
+    default: 1.0
+    description: Scale of head/expression motion vs the source.
+  - key: paste_back
+    type: boolean
+    default: true
+    description: Composite rendered face back onto the source background.

@@ -1,0 +1,41 @@
+# EchoMimic provider manifest — kept in sync with `registry/models.yaml`.
+api_version: "engine.contract/v1"
+
+engine_id: echomimic-v1
+display_name: EchoMimic (half-body avatar, landmark control)
+
+license:
+  code: Apache-2.0
+  weights: Apache-2.0
+  commercial_use: true
+
+runtime:
+  python: ">=3.10"
+  cuda: ">=11.8,<13"
+  pytorch: ">=2.0,<2.5"
+  vram_min_mb: 8192
+  cpu_friendly: false
+
+input:
+  source_image_required: true
+  audio_required: true
+  background_path_supported: true
+
+output:
+  container: mp4
+  codec: h264
+  resolution_policy: match_source
+
+supports_mock: true
+mock_env_var: HEYAVATAR_MOCK_ENGINE
+
+knobs:
+  - key: half_body
+    type: boolean
+    default: true
+    description: Render shoulders + head, not just the face.
+  - key: pose_drive
+    type: enum
+    choices: [audio, manual, none]
+    default: audio
+    description: How the head/shoulder pose is driven each chunk.

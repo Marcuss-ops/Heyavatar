@@ -1,0 +1,100 @@
+# =====================================================================
+#  Heyavatar Model Registry
+# =====================================================================
+#  Each entry below must stay in sync with the manifest.yaml that lives
+#  next to every provider adapter. The registry is the source of truth
+#  for license, weight provenance, and commercial-use eligibility.
+#
+#  Field semantics:
+#    model_id        — stable identifier referenced by manifests and contracts
+#    provider        — provider folder under providers/ (e.g. liveportrait)
+#    code_license    — license of the upstream code (we inherit via adapter)
+#    weights_license — license of the model weights/checkpoints
+#    commercial_use  — whether the combined stack may be used commercially
+#    dependencies    — auxiliary libraries the adapter needs at runtime
+#    checkpoint_url  — canonical download location (pinned)
+#    checkpoint_sha256 — content hash for verification
+#    notes           — free-form text surfaced at install/validation time
+# =====================================================================
+
+models:
+
+  - model_id: liveportrait-human-v1
+    provider: liveportrait
+    code_license: MIT
+    weights_license: MIT
+    commercial_use: false
+    dependencies:
+      face_detector:
+        provider: mediapipe
+        license: Apache-2.0
+      landmark_model:
+        provider: insightface
+        license: NonCommercial-ResearchOnly
+        replace_with: mediapipe-face-landmarker
+    checkpoint_url: https://github.com/KlingAIResearch/LivePortrait/releases
+    checkpoint_sha256: TBD
+    notes: >-
+      InsightFace-based landmark detector is non-commercial. Replace with
+      MediaPipe Face Landmarker before commercial deployment.
+
+  - model_id: musetalk-v1
+    provider: musetalk
+    code_license: MIT
+    weights_license: MIT
+    commercial_use: true
+    dependencies:
+      vae:
+        provider: stability-ai
+        license: OpenRAIL
+      whisper:
+        provider: openai
+        license: MIT
+      face_detector:
+        provider: mediapipe
+        license: Apache-2.0
+    checkpoint_url: https://github.com/TMElyralab/MuseTalk/releases
+    checkpoint_sha256: TBD
+    notes: >-
+      MuseTalk is the recommended real-time engine. Verify compatibility of
+      the VAE and Whisper versions at install time.
+
+  - model_id: echomimic-v1
+    provider: echomimic
+    code_license: Apache-2.0
+    weights_license: Apache-2.0
+    commercial_use: true
+    dependencies:
+      audio_encoder:
+        provider: echo-mimic-team
+        license: Apache-2.0
+    checkpoint_url: https://github.com/BadToBest/EchoMimic/releases
+    checkpoint_sha256: TBD
+    notes: >-
+      Use EchoMimic for "landmark-control" rendering pipelines.
+
+# =====================================================================
+#  Default tier routing (informational; the live router lives in
+#  src/scheduler/router.py and reads from this file).
+# =====================================================================
+
+tiers:
+  express:
+    engine: musetalk-v1
+    fallbacks:
+      - liveportrait-human-v1
+    rationale: Real-time-ish, MIT-licensed, low VRAM; degrades to LivePortrait
+      if all musetalk workers are busy or VRAM-bounded.
+  studio:
+    engine: liveportrait-human-v1
+    fallbacks:
+      - musetalk-v1
+      - echomimic-v1
+    rationale: Half-body with stitched expressions; prep required for
+      commercial use. Higher quality backstops when LivePortrait is busy.
+  premium:
+    engine: echomimic-v1
+    fallbacks: []
+    rationale: Generative, full-anchor control, highest VRAM. No fallback
+      by design — premium work is queued and shed rather than silently
+      downgraded to a lower tier.
