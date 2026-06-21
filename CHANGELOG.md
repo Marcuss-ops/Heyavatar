@@ -5,6 +5,57 @@ All notable changes to Heyavatar are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).## [Unreleased]
 
+### Removed — Repository slimming plan, Change 1
+
+Placeholder architecture that wrote text bytes to `.mp4` files instead of
+producing real assets is removed. Speculative contracts without a
+production consumer are removed. The corresponding placeholder workers
+and the one smoke test that exercised them are removed. See
+`docs/REPOSITORY_SLIMMING_PLAN.md` §4 for rationale.
+
+- `contracts/motion_repository.py` — `MotionRepository` ABC + `MotionClip`
+  dataclass; no production consumer.
+- `contracts/face_renderer.py` — `FaceRenderer` ABC; duplicated by
+  `contracts.avatar_engine.AvatarEngine.render_chunk`.
+- `contracts/lip_sync_engine.py` — `LipSyncEngine` ABC; duplicated by
+  the real `providers/musetalk/adapter/engine.MuseTalkAdapter`.
+- `contracts/body_asset_provider.py` — `BodyAssetProvider` ABC; never
+  used in MVP (replaced by a concrete `BodyTemplate` dataclass, see
+  Change 4).
+- `contracts/gesture_planner.py` — `GesturePlanner` ABC; semantic
+  planner deferred (see `ROADMAP.md` §2).
+- `providers/compositing/ffmpeg/compositor.py::FFmpegPoissonCompositor`
+  — wrote `b"COMPOSITED VIDEO OUTPUT WITH POISSON BLENDING"`. The real
+  compositor stays at `providers/compositing/opencv_face/compositor.py`.
+- `providers/compositing/ffmpeg/quality_checker.py::RuleBasedQualityChecker`
+  — returned `passed=True` with no real checks.
+- `providers/lipsync/musetalk/lip_sync.py::MuseTalkLipSyncEngine` —
+  wrote `b"LIPSYNCED FACE OUTPUT"`. The real lip-sync lives in
+  `providers/musetalk/adapter/engine.py`.
+- `providers/body_assets/prerecorded/template_provider.py::PrerecordedTemplateProvider`
+  — wrote `b"PRERECORDED BODY CLIP"`.
+- `providers/motion_extraction/mediapipe/{motion_extractor,gesture_planner}.py`
+  — returned zero-motion clip / rule-based intents.
+- `src/motion/{composer,resolver,registry,cache_keys}.py` and
+  `src/motion/__init__.py` — only consumed by code that is also removed.
+- `src/face/resolver.py::CachedFaceRenderer` — wrote `b"MOCK FACE TRACK"`.
+- `src/body/{resolver,registry}.py` — `CachedBodyAssetProvider` wrote
+  `b"MOCK VIDEO DATA"`.
+- `src/application/plan_video.py::VideoPlanner`,
+  `src/application/precompute_avatar.py::AvatarPrecomputer` — only
+  used by the deleted placeholder workers.
+- `workers/{face,composition,lipsync,quality,planner,avatar_precompute}_worker.py`
+  — wired the placeholder providers/contracts above; nothing on the
+  real render path invoked them.
+- `tests/smoke/test_new_architecture.py` — exercised the deleted code
+  paths.
+
+### Added — Roadmap
+
+- `ROADMAP.md` (top-level) — frozen/deferred paths from the slimming
+  plan, each with a re-introduction gate. Mirrors
+  `docs/REPOSITORY_SLIMMING_PLAN.md` §5/§6/§10.
+
 ### Added
 
 - Multi-stage `Dockerfile` for `api` and `gpu-worker` services. The
