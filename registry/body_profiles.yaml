@@ -1,0 +1,13 @@
+profiles:
+  - id: male_business_01
+    name: Male Business 01
+    gender: male
+    style: business
+    outfits: ["business_01", "business_02"]
+    cameras: ["medium_shot", "close_up"]
+  - id: female_casual_01
+    name: Female Casual 01
+    gender: female
+    style: casual
+    outfits: ["casual_01", "casual_02"]
+    cameras: ["medium_shot", "close_up"]

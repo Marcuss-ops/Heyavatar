@@ -114,6 +114,9 @@ def _audio_to_driving_dsp(
         slice_ = [0] * (expected_frames * target_sample_rate // fps)
     else:
         slice_ = resampled[start_idx:end_idx]
+        expected_samples = expected_frames * target_sample_rate // fps
+        if len(slice_) < expected_samples:
+            slice_ = slice_ + [0] * (expected_samples - len(slice_))
 
     rms, zcr, pitch = _compute_envelopes(slice_, target_sample_rate, expected_frames)
     if not rms:

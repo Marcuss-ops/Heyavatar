@@ -61,6 +61,38 @@ def _upstream_crop_module():
     return _importlib.import_module(f"{_UPSTREAM_PKG}.utils.crop")
 
 
+def _paste_back_seamless(img_crop: np.ndarray, M_c2o: np.ndarray, img_ori: np.ndarray, mask_ori: np.ndarray) -> np.ndarray:
+    """Seamless clone-based pasteback to avoid neck boundary seams/ghosting."""
+    import cv2
+    dsize = (img_ori.shape[1], img_ori.shape[0])
+    
+    # 1. Warp the crop frame to the original image coordinates
+    warped_crop = cv2.warpAffine(img_crop, M_c2o[:2, :], dsize=dsize, flags=cv2.INTER_LINEAR)
+    
+    # 2. Get binary mask from float mask
+    mask_binary = (mask_ori * 255).astype(np.uint8)
+    if len(mask_binary.shape) == 3:
+        mask_binary = mask_binary[:, :, 0]
+        
+    _, mask_binary = cv2.threshold(mask_binary, 1, 255, cv2.THRESH_BINARY)
+    
+    # 3. Find bounding box/center of mask
+    contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return np.clip(mask_ori * warped_crop + (1 - mask_ori) * img_ori, 0, 255).astype(np.uint8)
+        
+    x, y, w, h = cv2.boundingRect(np.concatenate(contours))
+    center = (x + w // 2, y + h // 2)
+    
+    try:
+        # cv2.seamlessClone matches boundaries and matches background illumination
+        cloned = cv2.seamlessClone(warped_crop, img_ori, mask_binary, center, cv2.NORMAL_CLONE)
+        return cloned
+    except Exception:
+        # Fallback in case of boundary violations or cv2 exceptions
+        return np.clip(mask_ori * warped_crop + (1 - mask_ori) * img_ori, 0, 255).astype(np.uint8)
+
+
 def _real_render_chunk_impl(
     self,
     request: RenderChunkRequest,
@@ -120,11 +152,12 @@ def _real_render_chunk_impl(
             img_ori = None
             M_c2o = None
 
+    static_head = self.inf_cfg.extra.get("static_head", False)
     # If the wrapper's stitching retargeting module is exposed, use the
     # full batched retarget path; otherwise fall back to the simpler
     # expression-delta mock-form.
     kp_d = _build_driving_keypoints(
-        driving, kp_s, torch, self._torch_device, self._wrapper
+        driving, kp_s, torch, self._torch_device, self._wrapper, static_head=static_head
     )
 
     warped_frames = []
@@ -132,7 +165,7 @@ def _real_render_chunk_impl(
     t_start = time.monotonic()
 
     warping = getattr(self._wrapper, "warping_module", None)
-    stitching = getattr(self._wrapper, "stitching_retargeting_module", None)
+    stitching = None
     if warping is None:
         raise RuntimeError(
             "LivePortrait wrapper does not expose warping_module; "
@@ -195,10 +228,8 @@ def _real_render_chunk_impl(
                 M_c2o_frame = M_c2o.copy()
                 frame_idx = batch_start + j
                 t_sec = frame_idx / request.fps
-                
-                M_c2o_frame = M_c2o.copy()
-                tx_sway = 4.0 * math.sin(2 * math.pi * 0.15 * t_sec)
-                ty_sway = 1.5 * math.cos(2 * math.pi * 0.10 * t_sec)
+                tx_sway = 0.0 if static_head else 4.0 * math.sin(2 * math.pi * 0.15 * t_sec)
+                ty_sway = 0.0 if static_head else 1.5 * math.cos(2 * math.pi * 0.10 * t_sec)
                 M_c2o_frame[0, 2] += tx_sway
                 M_c2o_frame[1, 2] += ty_sway
                 
@@ -206,7 +237,7 @@ def _real_render_chunk_impl(
                 mask_ori_frame = prepare_paste_back(mask_crop, M_c2o_frame, dsize_ori)
                 mask_ori_frame = mask_ori_frame[..., None]
                 
-                pasted = paste_back(frame_rgb, M_c2o_frame, img_ori, mask_ori_frame)
+                pasted = _paste_back_seamless(frame_rgb, M_c2o_frame, img_ori, mask_ori_frame)
                 warped_frames.append(pasted)
             else:
                 warped_frames.append(frame_rgb)
@@ -277,6 +308,7 @@ def _build_driving_keypoints(
     torch: Any,
     device: Any,
     wrapper: Any = None,
+    static_head: bool = False,
 ) -> np.ndarray:
     """Combine canonical source keypoints with the expression deltas.
 
@@ -344,9 +376,14 @@ def _build_driving_keypoints(
         # Scale movement based on audio volume
         scales = 0.8 + 0.5 * apertures
 
-        p_deg = scales * torch.sin(2 * math.pi * 0.35 * t / fps) + 0.4 * apertures
-        y_deg = scales * torch.cos(2 * math.pi * 0.25 * t / fps)
-        r_deg = scales * 0.6 * torch.sin(2 * math.pi * 0.45 * t / fps)
+        if static_head:
+            p_deg = torch.zeros_like(apertures)
+            y_deg = torch.zeros_like(apertures)
+            r_deg = torch.zeros_like(apertures)
+        else:
+            p_deg = scales * torch.sin(2 * math.pi * 0.35 * t / fps) + 0.4 * apertures
+            y_deg = scales * torch.cos(2 * math.pi * 0.25 * t / fps)
+            r_deg = scales * 0.6 * torch.sin(2 * math.pi * 0.45 * t / fps)
 
         p = torch.deg2rad(p_deg)
         y = torch.deg2rad(y_deg)
@@ -385,8 +422,8 @@ def _build_driving_keypoints(
         kp_d_rotated = torch.bmm(kp_d_batched - centroid, R.transpose(1, 2)) + centroid
 
         # Small translation/sway batch-wise
-        tx = 0.005 * torch.sin(2 * math.pi * 0.2 * t / fps)
-        ty = 0.005 * torch.cos(2 * math.pi * 0.15 * t / fps)
+        tx = torch.zeros_like(t) if static_head else 0.005 * torch.sin(2 * math.pi * 0.2 * t / fps)
+        ty = torch.zeros_like(t) if static_head else 0.005 * torch.cos(2 * math.pi * 0.15 * t / fps)
 
         kp_d_rotated[:, :, 0] += tx[:, None]
         kp_d_rotated[:, :, 1] += ty[:, None]

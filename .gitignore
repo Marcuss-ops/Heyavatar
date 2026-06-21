@@ -83,3 +83,4 @@ packs/
 # !docs/assets/*.mp4
 /LivePortrait/
 checkpoints/
+tmp_debug_test/

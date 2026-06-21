@@ -1,0 +1,61 @@
+gestures:
+  - id: idle_small
+    name: Idle Small
+    duration_seconds: 4.0
+  - id: idle_medium
+    name: Idle Medium
+    duration_seconds: 4.0
+  - id: explain_left
+    name: Explain Left
+    duration_seconds: 3.0
+  - id: explain_right
+    name: Explain Right
+    duration_seconds: 3.0
+  - id: explain_both
+    name: Explain Both
+    duration_seconds: 4.0
+  - id: emphasis_small
+    name: Emphasis Small
+    duration_seconds: 2.0
+  - id: emphasis_large
+    name: Emphasis Large
+    duration_seconds: 3.0
+  - id: count_one
+    name: Count One
+    duration_seconds: 2.5
+  - id: count_two
+    name: Count Two
+    duration_seconds: 2.5
+  - id: count_three
+    name: Count Three
+    duration_seconds: 3.0
+  - id: point_left
+    name: Point Left
+    duration_seconds: 2.0
+  - id: point_right
+    name: Point Right
+    duration_seconds: 2.0
+  - id: open_palms
+    name: Open Palms
+    duration_seconds: 3.0
+  - id: comparison
+    name: Comparison
+    duration_seconds: 3.5
+  - id: growth
+    name: Growth
+    duration_seconds: 3.0
+  - id: decline
+    name: Decline
+    duration_seconds: 3.0
+  - id: question
+    name: Question
+    duration_seconds: 2.5
+  - id: agreement
+    name: Agreement
+    duration_seconds: 2.0
+  - id: conclusion
+    name: Conclusion
+    duration_seconds: 3.5
+  - id: call_to_action
+    name: Call to Action
+    duration_seconds: 4.0

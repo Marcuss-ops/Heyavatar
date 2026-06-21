@@ -208,7 +208,7 @@ def _real_prepare_identity_impl(self, source_image: Path) -> Dict[str, bytes]:
 
         meta_dict = {
             "schema": LIVE_PORTRAIT_PACK_VERSION,
-            "upstream": PackSchema.upstream_url,
+            "upstream": PackSchema().upstream_url,
             "source_image": str(source_image),
             "detector": detector_used,
             # ``mediapipe_attempted`` is the gate signal: it is True when

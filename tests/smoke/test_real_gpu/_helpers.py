@@ -36,7 +36,7 @@ from src.core.config import get_settings
 # available — the engine would load into a DEGRADED state and every
 # assertion would fail in CI. Skip preemptively instead.
 _LIVE_PORTRAIT_UPSTREAM_SENTINEL = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "LivePortrait"
     / "src"
     / "live_portrait_pipeline.py"
@@ -68,7 +68,7 @@ requires_cuda = pytest.mark.skipif(
 # ── LivePortrait upstream path bootstrap ─────────────────────────────
 
 
-_LIVE_PORTRAIT_REPO = Path(__file__).resolve().parents[2] / "LivePortrait"
+_LIVE_PORTRAIT_REPO = Path(__file__).resolve().parents[3] / "LivePortrait"
 
 
 def _setup_live_portrait_path() -> None:
@@ -105,8 +105,16 @@ def _test_image(tmp_path: Path) -> Path:
     p = tmp_path / "actor.png"
     from PIL import Image
 
-    img = Image.new("RGB", (256, 256), color=(255, 0, 0))
-    img.save(p)
+    # Use a real face image from LivePortrait assets to ensure the model has
+    # actual face features to detect and warp (otherwise warping a solid red
+    # image yields no pixel changes, causing SSD to be near zero).
+    src_jpg = Path(__file__).resolve().parents[3] / "LivePortrait" / "assets" / "examples" / "source" / "s0.jpg"
+    if src_jpg.is_file():
+        img = Image.open(src_jpg)
+        img.save(p)
+    else:
+        img = Image.new("RGB", (256, 256), color=(255, 0, 0))
+        img.save(p)
     return p
 
 
@@ -129,7 +137,11 @@ def _test_audio(tmp_path: Path) -> Path:
     samples: list[int] = [0] * silence_samples
     for i in range(tone_samples):
         t = i / sample_rate
-        samples.append(int(amplitude * math.sin(2.0 * math.pi * 1000.0 * t)))
+        # Amplitude modulate at 5 Hz so the RMS envelope varies dynamically.
+        # This drives the DSP audio bridge mouth aperture to open and close,
+        # producing non-zero frame-to-frame SSD values.
+        mod = 0.5 + 0.5 * math.sin(2.0 * math.pi * 5.0 * t)
+        samples.append(int(amplitude * mod * math.sin(2.0 * math.pi * 1000.0 * t)))
     data = b"".join(
         struct.pack("<h", max(-32768, min(32767, s))) for s in samples
     )

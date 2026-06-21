@@ -1,0 +1,11 @@
+profiles:
+  - id: studio_1080p
+    resolution: [1920, 1080]
+    fps: 25
+    codec: "h264"
+    bitrate_bps: 8000000
+  - id: mobile_vertical_1080p
+    resolution: [1080, 1920]
+    fps: 25
+    codec: "h264"
+    bitrate_bps: 6000000
