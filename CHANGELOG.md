@@ -305,3 +305,84 @@ across process boundaries.
   other refactored module now use `get_logger(__name__)` rather than
   hardcoded dotted-path strings, so log routing/shipment by logger
   name stays correct under the new module locations.
+
+### Changed — Repository slimming plan, Change 3 (freeze)
+
+Per `docs/REPOSITORY_SLIMMING_PLAN.md` §5 and `ROADMAP.md` §1 the
+following premature subsystems are moved out of the active runtime.
+Each freeze's re-introduction gate is documented in `ROADMAP.md` §1.
+
+- **EchoMimic frozen.** `providers/echomimic/` directory kept on disk
+  and `EngineId.ECHO_MIMIC` enum value preserved for forward compat.
+  `providers/__init__.py::PROVIDERS` no longer registers
+  `EchoMimicAdapter`; `get_provider(EngineId.ECHO_MIMIC)` raises
+  `KeyError` with a freeze-message that distinguishes the frozen
+  engine id from an unknown one. The `EchoMimicAdapter` itself still
+  raises `NotImplementedError` on the real path — unchanged.
+- **SadTalker audio bridge gated.** `dsp` is the only production
+  backend; `neural` is preserved behind
+  `HEYAVATAR_AUDIO_BRIDGE_BACKEND=neural` but never the default.
+  `providers/liveportrait/audio_bridge/__init__.py` documents the
+  freeze in its module docstring; the bridge logic itself is
+  unchanged.
+- **Multi-tier routing collapsed** to one `standard` profile.
+  `src/scheduler/routing/router.py::TierRouter` ignores the legacy
+  `tiers:` block in `registry/models.yaml` and exposes only the
+  `standard` profile. The `Tier` enum keeps `EXPRESS`/`STUDIO`/
+  `PREMIUM` for backwards API compatibility — `for_tier(t)` returns
+  the `standard` decision regardless. `pick_available` no longer walks
+  a fallback list; if the standard primary has no idle worker the
+  router returns `None`. `registry/models.yaml::tiers` is replaced by
+  `registry/models.yaml::standard`.
+- **`WorkerPool.sync_from_redis` invocation frozen.**
+  `api/app/state.py::lifespan` no longer starts the periodic gatherer
+  thread (call commented out with a freeze note). `_start_worker_pool_sync_gatherer`
+  is preserved so unit tests under `tests/scheduler/test_cross_process_capacity.py`
+  still exercise the wire schema.
+  `workers/gpu_worker/worker.py::_start_redis_heartbeat` is now gated
+  behind a new `Settings.enable_distributed_heartbeat` setting
+  (default `False`). Operators who need the heartbeat daemon set
+  `HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT=1`; until then the
+  function logs a debug message and returns before spinning up the
+  thread.
+- **S3 backend frozen.** `ObjectStore` ABC + `FsObjectStore` remain.
+  `Settings.object_store_backend` tightened from
+  `Literal["fs", "s3"]` to `Literal["fs"]`. The
+  `s3_endpoint_url` and `s3_bucket` settings are removed. The
+  `src/storage/object_store.py` module docstring claims the freeze
+  explicitly; `build_object_store` continues to raise
+  `NotImplementedError` for any non-`fs` backend (a tight literal
+  prevents the string from reaching the switch in practice).
+- **OpenTelemetry exporters frozen.**
+  `src/observability/distributed/tracing.py::setup_tracing` already
+  short-circuits when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset; the
+  module docstring now claims the freeze explicitly. W3C traceparent
+  inject/extract (`src/observability/distributed/propagation.py`)
+  is kept unchanged: it is still used by `api/routes/jobs.py` and
+  `api/routes/avatars.py` for queue-payload context propagation, and
+  graceful no-ops when the SDK is not installed.
+
+### Changed — Tests (Change 3)
+
+- `tests/scheduler/test_router_pick_available.py` rewritten to
+  assert the frozen single-tier behavior: standard primary returns
+  the engine when idle; returns `None` when busy (no fallback walk).
+- `tests/scheduler/test_router.py` rewritten to assert the single
+  `standard` route and the missing-registry fallback to a default
+  primary (no `LookupError`, no legacy `tiers:` expectation).
+- `tests/scheduler/test_cross_process_capacity.py::test_sync_from_redis_routes_in_router_via_fallback`
+  keeps the schema check but pins the frozen router outcome:
+  `pick_available` returns `None` rather than walking to the
+  liveportrait fallback when the standard primary is busy.
+- `tests/providers/test_worker_pool_in_process.py` rewritten against
+  the new router (no `_rules` attribute, no fallback walk test).
+  `tests.contract.test_avatar_engine_contract.test_provider_passes_contract`
+  auto-shrinks: its `parametrize("engine_id", list(PROVIDERS))` now
+  iterates only `LIVE_PORTRAIT_HUMAN_V1` and `MUSE_TALK_V1` because
+  `EchoMimic` is no longer registered.
+
+Verification:
+  pytest tests/ --ignore=tests/observability \
+    -k "not test_api_metrics and not test_metrics and not test_real_gpu"
+  → 166 passed, 7 deselected (was 159 before Change 3; +7 from
+  rewritten router tests).

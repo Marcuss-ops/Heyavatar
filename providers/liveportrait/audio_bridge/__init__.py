@@ -18,12 +18,21 @@ The :func:`audio_to_driving` dispatch is driven by
 :setting:`Settings.audio_bridge_backend` (env var
 ``HEYAVATAR_AUDIO_BRIDGE_BACKEND``):
 
-* ``dsp`` (default, CI) — pure-Python envelope mapping. No ML deps.
-  Same deterministic output the legacy tests assert against.
-* ``neural`` (production) — SadTalker Audio2Motion (3DMM 50+3) →
+* ``dsp`` (default, CI, production) — pure-Python envelope mapping.
+  No ML deps. Same deterministic output the legacy tests assert
+  against. **This is the actively-supported backend per Change 3 /
+  ROADMAP.md §1.**
+* ``neural`` (frozen) — SadTalker Audio2Motion (3DMM 50+3) →
   :mod:`providers.liveportrait.audio_bridge.projection` →
-  LivePortrait driving tensor. Requires
-  ``pip install -e ".[audio-bridge-neural]"`` on the worker image.
+  LivePortrait driving tensor. The submodule tree is preserved on
+  disk for forward compatibility but the production dispatch never
+  takes this branch in the MVP. Operators flipping back to
+  ``neural`` MUST reinstall the
+  ``pip install -e ".[audio-bridge-neural]"`` extra; SadTalker's
+  audio2motion checkpoint weights are trained on LRW + VoxCeleb
+  (non-commercial research corpora) so the
+  ``liveportrait-human-v1.commercial_use`` flag stays ``false``
+  regardless.
   **Never** auto-falls-back to DSP; missing imports surface as
   ``EngineState.DEGRADED`` so the orchestrator routes around broken
   workers.
@@ -34,11 +43,13 @@ Submodules
   ``SadTalkerCoefs``) shared across the bridge.
 * :mod:`dsp`    — pure-Python DSP primitives (WAV reader, resampler,
   RMS/ZCR/pitch envelopes). Backend-internal; never reaches the public
-  boundary.
+  boundary. **Production path of the MVP.**
 * :mod:`projection` — 3DMM(50) → LP(21, 3) static projection with
   identity placeholder matrix (calibration follows on GPU worker).
+  Frozen with the SadTalker backend.
 * :mod:`sadtalker` — SadTalker Audio2Motion wrapper. Raises
   RuntimeError on missing imports instead of silent fallback.
+  Frozen with the SadTalker backend.
 * :mod:`bridge` — the public :func:`audio_to_driving` function.
 
 Citation

@@ -184,14 +184,51 @@ class GpuWorker:
     def _start_redis_heartbeat(self, engine) -> None:
         """Spawn a daemon thread that publishes this worker's health.
 
-        The thread polls ``engine.health()`` every
+        **FROZEN by default per Change 3 / ROADMAP.md §1.** The MVP
+        deployment target is `1 API · 1 Redis · 1 GPU worker · 1
+        encoder path` so cross-process heartbeats are not part of the
+        active runtime. The thread is only spun up when the operator
+        explicitly opts in via
+        ``HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT=1`` (a flag reserved
+        for the re-introduction gate in :file:`docs/REPOSITORY_SLIMMING_PLAN.md`
+        §5). Tests under :file:`tests/providers/test_worker_pool_in_process.py`
+        and the in-process heartbeat tests under
+        :file:`tests/workers/test_gpu_worker/test_redis_heartbeat.py`
+        still call :meth:`publish_heartbeat_once` directly — they do
+        NOT depend on this daemon thread.
+
+        When the gate is on the thread polls ``engine.health()`` every
         ``settings.worker_health_publish_seconds`` and writes the
         JSON-snapshot to ``heyavatar:worker:{id}:health`` with a TTL.
         Errors are swallowed inside ``_publish_health`` so a transient
         Redis blip does not crash the worker. Stops cooperatively
         when :attr:`_stop` is set.
         """
+        # Cheap check FIRST so the disabled by-default path doesn't even
+        # import threading / re-fetch the logger. Frozen per Change 3.
+        if not getattr(self.settings, "enable_distributed_heartbeat", False):
+            from src.core.logging import get_logger
+
+            get_logger("workers.gpu_worker.heartbeat").debug(
+                "GpuWorker heartbeat thread disabled (frozen by Change 3). "
+                "Set HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT=1 to opt in."
+            )
+            return
+
         import threading
+
+        client = self._resolve_redis_client()
+        if client is None:
+            return
+        from src.core.logging import get_logger
+        import threading
+
+        if not getattr(self.settings, "enable_distributed_heartbeat", False):
+            _LOG.debug(
+                "GpuWorker heartbeat thread disabled (frozen by Change 3). "
+                "Set HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT=1 to opt in."
+            )
+            return
 
         client = self._resolve_redis_client()
         if client is None:

@@ -80,38 +80,51 @@ def test_unregister_unknown_worker_does_not_raise():
 
 
 def test_pick_available_walks_primary_then_fallback():
-    """When the studio primary is DEGRADED, the router falls back.
+    """**FROZEN per Change 3 / ROADMAP.md §1.** The router no longer
+    walks a fallback list. Pre-Change-3 this test asserted that a
+    studio request whose primary (liveportrait-human-v1) was DEGRADED
+    fell back to ``musetalk-v1``. Now that the fallback walk is
+    removed the router returns ``None`` if the standard primary has
+    no idle worker, regardless of other engines' capacity.
 
-    Uses direct rule injection (no on-disk registry) so the test is
-    stable across edits to ``registry/models.yaml``.
+    We pin the new contracted behaviour here: the liveportrait worker
+    is DEGRADED, no musetalk worker is registered, and
+    ``pick_available`` must return ``None``.
     """
     pool = WorkerPool()
     pool.register(_record("w-lp", EngineId.LIVE_PORTRAIT,
                           state=ce.EngineState.DEGRADED))
-    pool.register(_record("w-mt", EngineId.MUSE_TALK))
+    # Deliberately do NOT register a musetalk worker. Pre-Change-3 the
+    # router would still pick musetalk as fallback; post-Change-3 it
+    # returns None because the standard primary (musetalk) has zero
+    # capacity.
     router = TierRouter(registry_path=__import__(
         "pathlib", fromlist=["Path"]
     ).Path("does-not-exist.yaml"))
-    router._rules = {
-        "studio": RoutingDecision(
-            primary="liveportrait-human-v1",
-            fallbacks=("musetalk-v1",),
-        ),
-    }
-    assert router.pick_available(Tier.STUDIO, pool) == "musetalk-v1"
+    # No route injection: post-Change-3 the router exposes a single
+    # standard profile (`musetalk-v1`) and ignores `_rules` for the
+    # pickup. We assert on the behaviour exactly.
+    assert router.pick_available(Tier.STUDIO, pool) is None
+    assert router.pick_available(Tier.EXPRESS, pool) is None
 
 
 def test_pick_available_returns_none_when_no_idle_worker():
+    """**Frozen behaviour.** Single standard primary, returns ``None``
+    when no idle worker is registered for it.
+    """
     pool = WorkerPool()
     pool.register(_record("w-lp", EngineId.LIVE_PORTRAIT,
                           state=ce.EngineState.DEGRADED))
     router = TierRouter(registry_path=__import__(
         "pathlib", fromlist=["Path"]
     ).Path("does-not-exist.yaml"))
-    router._rules = {
-        "express": RoutingDecision(primary="liveportrait-human-v1"),
-    }
+    # The standard primary is musetalk-v1; with no musetalk worker
+    # registered the router returns None.
     assert router.pick_available(Tier.EXPRESS, pool) is None
+    # list_routes exposes a single row regardless of pool contents.
+    routes = router.list_routes()
+    assert len(routes) == 1
+    assert routes[0][0] == "standard"
 
 
 def test_sync_from_redis_returns_zero_when_no_client():

@@ -161,7 +161,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # worker process publishing ``heyavatar:worker:{id}:health``
     # becomes visible to ``TierRouter.pick_available`` even when the
     # API and the worker live on different machines.
-    _start_worker_pool_sync_gatherer(state)
+    #
+    # **FROZEN per Change 3 / ROADMAP.md §1**. The MVP deployment
+    # target is `1 API · 1 Redis · 1 GPU worker · 1 encoder path` so
+    # cross-process capacity routing is no longer needed. The gatherer
+    # function above is preserved for the existing in-process unit
+    # tests; when this looks right again we re-enable with one line
+    # beneath this comment.
     yield
     # Signal sync gatherer to stop. Daemon thread will exit on the
     # process exit anyway but a graceful join keeps test output clean.

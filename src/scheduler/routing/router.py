@@ -1,14 +1,24 @@
-"""Tier router — chooses which engine handles a given render request.
+"""Tier router — collapsed to one profile per Change 3 of the slimming plan.
 
-The design document shows three quality tiers (express / studio / premium)
-and a portfolio of engines. The router takes a tier and a WorkerPool and
-returns the engine id best suited to handle the next request.
+The slimming plan (see ``docs/REPOSITORY_SLIMMING_PLAN.md`` §5 and
+``ROADMAP.md`` §1) freezes multi-tier routing: the MVP exposes a single
+``standard`` profile (LivePortrait+Musetalk, 25 FPS, 256×256 face ROI,
+H.264 output, prerecorded body template). The router keeps the public
+API (``for_tier``, ``pick_available``, ``list_routes``) so existing
+callers and tests do not need to change; the engine returned is
+always the registry's ``standard.primary`` regardless of the
+:class:`src.domain.enums.Tier` value the caller passes. Future
+``EXPRESS``-class enum members and any out-of-tree queue payloads
+therefore degrade gracefully to ``standard`` rather than blowing up.
 
-For v1 the routing is static: every tier has a primary engine plus a
-list of fallbacks, declared in :mod:`registry.models_yaml`. Dynamic
-routing — using queue depth, VRAM availability, and historical latency —
-will be layered on top via a scoring function without changing the
-public interface.
+No fallback walk, no dynamic capacity scoring, no per-tier quality tier
+distinction. The router is a thin mapping: ``tier → "standard.primary"``.
+
+The legacy ``tiers:`` block in :file:`registry/models.yaml` is still
+read (for backwards compatibility with installed configs) but every
+legacy tier's decision is ignored — only the ``standard`` block is
+honored. Operators wanting to retarget the standard profile edit
+``registry/models.yaml::standard.engine`` and restart.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ from .worker_pool import WorkerPool
 
 
 DEFAULT_REGISTRY = Path("registry/models.yaml")
+STANDARD_PROFILE = "standard"
 
 
 @dataclass(slots=True, frozen=True)
@@ -38,61 +49,81 @@ class RoutingDecision:
 class TierRouter:
     registry_path: Path = DEFAULT_REGISTRY
 
-    _rules: Dict[str, RoutingDecision] = field(init=False, repr=False, default_factory=dict)
+    _standard: RoutingDecision = field(
+        init=False, repr=False, default_factory=lambda: RoutingDecision(
+            primary=EngineId.MUSE_TALK.value,
+        )
+    )
 
     def __post_init__(self) -> None:
         self.reload()
 
     def reload(self) -> None:
-        rules: Dict[str, RoutingDecision] = {}
+        """Refresh the standard-profile decision from ``registry/models.yaml``.
+
+        On startup ``standard.primary`` defaults to ``musetalk-v1``. If
+        ``registry/models.yaml`` defines a ``standard`` block the
+        operator override takes effect. The legacy ``tiers:`` block is
+        read but intentionally ignored.
+        """
+        primary_default = EngineId.MUSE_TALK.value
+        # Enforce that the primary string is one of the registered
+        # enum values; fall back to ``MUSE_TALK`` if a stray
+        # ``standard.primary`` reference points to a frozen engine id.
         if not self.registry_path.is_file():
-            self._rules = rules
+            self._standard = RoutingDecision(primary=primary_default)
             return
         with self.registry_path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
-        tiers = data.get("tiers", {}) or {}
-        for tier_name, payload in tiers.items():
-            engine = payload.get("engine")
-            if not engine:
-                continue
-            fallbacks = tuple(payload.get("fallbacks", ()) or ())
-            rules[tier_name.lower()] = RoutingDecision(primary=engine, fallbacks=fallbacks)
-        self._rules = rules
+        std = data.get(STANDARD_PROFILE) or {}
+        primary = std.get("engine") if isinstance(std, dict) else None
+        try:
+            eid = EngineId.from_string(primary) if primary else None
+        except ValueError:
+            eid = None
+        if eid is None:
+            eid = EngineId.MUSE_TALK
+        self._standard = RoutingDecision(primary=eid.value)
 
     def for_tier(self, tier: Tier) -> RoutingDecision:
-        decision = self._rules.get(tier.value)
-        if decision is None:
-            raise LookupError(
-                f"No routing rule for tier '{tier.value}' in {self.registry_path}."
-                " Make sure registry/models.yaml contains a `tiers:` section."
-            )
-        return decision
+        """Return the (only) routing decision for ``tier``.
+
+        All tier values resolve to the collapsed ``standard`` profile
+        per Change 3 / ``ROADMAP.md`` §1. The :class:`src.domain.enums.Tier`
+        enum keeps historical values for backwards compatibility.
+        """
+        # Touch ``tier`` so callers see a symmetric API. The actual
+        # return is always the standard profile.
+        del tier  # noqa: ARG001 — intentional; tier is ignored
+        return self._standard
 
     def pick_available(
         self,
         tier: Tier,
         pool: WorkerPool,
     ) -> Optional[str]:
-        """Pick the best engine available right now for ``tier``.
+        """Pick the engine available right now for ``tier``.
 
-        Walks the primary engine first, then fallbacks, and returns the
-        first engine id with at least one idle worker in the pool.
-        Returns ``None`` if no worker is available — the caller can then
-        decide to wait, fail, or escalate to a higher tier.
+        Frozen-tier fallback walk removed (Change 3): the router always
+        returns the standard profile's primary engine and only the
+        primary. If there's no idle worker for it the router returns
+        ``None`` so the caller can wait, fail, or escalate. The
+        capacity-aware logic is in :class:`WorkerPool`.
         """
         decision = self.for_tier(tier)
-        candidates = [decision.primary, *decision.fallbacks]
-        for engine_id in candidates:
-            try:
-                eid = EngineId.from_string(engine_id)
-            except ValueError:
-                continue
-            if pool.capacity_for(eid) > 0:
-                return engine_id
+        try:
+            eid = EngineId.from_string(decision.primary)
+        except ValueError:
+            return None
+        if pool.capacity_for(eid) > 0:
+            return decision.primary
         return None
 
     def list_routes(self) -> List[Tuple[str, str, Tuple[str, ...]]]:
-        return [
-            (tier, dec.primary, dec.fallbacks)
-            for tier, dec in sorted(self._rules.items())
-        ]
+        """Return the canonical route table — exactly one entry.
+
+        ``("standard", primary, ())`` — no fallbacks because the
+        multi-tier fallback walk is frozen.
+        """
+        dec = self._standard
+        return [(STANDARD_PROFILE, dec.primary, dec.fallbacks)]

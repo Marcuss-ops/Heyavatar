@@ -5,6 +5,23 @@ of the codebase can import ``tracing.py`` even when
 ``prometheus-client`` / ``opentelemetry-*`` are not installed.
 ``setup_tracing(settings)`` is a no-op if the OTLP endpoint is not
 configured.
+
+**FROZEN per Change 3 / ROADMAP.md §1.** Heyavatar's MVP relies on
+structured JSON logs with ``job_id``, ``avatar_id``, ``engine id``,
+``stage duration``, ``GPU seconds``, ``terminal state``, and
+``failure reason`` (see ``src/core/logging.py``). OTLP exporters,
+Grafana dashboards, W3C propagation at scale, and an OTLP collector
+deployment are explicitly *out* of the active runtime. The
+:class:`Settings.otel_endpoint` field is preserved for forward
+compatibility only; ``setup_tracing`` always
+short-circuits unless ``OTEL_EXPORTER_OTLP_ENDPOINT`` is explicitly
+set.
+
+Re-introduction gate (``docs/REPOSITORY_SLIMMING_PLAN.md`` §5):
+an OTLP collector wired by ops AND a measurement showing traces
+provide operational value beyond the structured-log baseline. Until
+then this module's job is to *not break* the rest of the codebase
+when the SDK is not installed.
 """
 
 from __future__ import annotations

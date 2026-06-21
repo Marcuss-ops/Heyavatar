@@ -1,10 +1,26 @@
 """Object store abstraction.
 
 The API, the workers, and the encoder all exchange large blobs (avatar
-packs, rendered chunks, final videos). v1 ships a file-system
-implementation; production deployments swap to S3 / MinIO via the same
-interface.
+packs, rendered chunks, final videos).
+
+**FROZEN per Change 3 / ROADMAP.md §1.** Only the filesystem
+implementation is shipped. ``S3`` / ``MinIO`` / ``aioboto3`` are
+intentionally NOT implemented:
+
+  * The MVP deployment target is `1 API · 1 Redis · 1 GPU worker · 1
+    encoder path` co-located; cross-region object storage is not a
+    production need today.
+  * ``src.core.config.Settings.object_store_backend`` is typed as
+    ``Literal["fs"]`` so anything else is rejected at parse time.
+  * Adding S3 back requires: a real S3ObjectStore implementation
+    (``async`` boto3 client), a signed-URL helper used by the API for
+    result downloads, and a tier override in the ObjectStore ABC.
+
+The :class:`ObjectStore` ABC + :class:`FsObjectStore` keep the
+interface narrow so an S3 implementation would be a drop-in subclass.
 """
+
+from __future__ import annotations
 
 from __future__ import annotations
 

@@ -131,18 +131,21 @@ def test_sync_from_redis_publishes_with_expected_ttl():
 
 
 def test_sync_from_redis_routes_in_router_via_fallback():
-    """When a remote worker registers as the fallback engine, the
-    router flips from primary (busy) to fallback (idle).
+    """Frozen per Change 3 / ROADMAP.md §1: the router no longer walks a
+    fallback list. When the standard primary (musetalk-v1) is busy, the
+    router returns ``None`` even if a liveportrait slot is idle.
 
-    Mirrors the production scenario where a single
-    ``musetalk-v1`` worker's CPU core is saturated and a spare
-    LivePortrait slot kicks in.
+    This test still verifies that
+    :meth:`WorkerPool.sync_from_redis` *absorbs* the liveportrait
+    record correctly (so the schema contract is unchanged), then
+    pins the frozen router behavior.
     """
     redis_stub = _StubRedis()
     _publish_health(redis_stub, "remote-lp", EngineId.LIVE_PORTRAIT)
 
     pool = WorkerPool()
-    # Register a "busy" musetalk worker to force the fallback walk.
+    # Register a "busy" musetalk worker to force the standard profile
+    # to return None.
     from src.scheduler.routing.worker_pool import WorkerRecord
 
     pool.register(
@@ -157,15 +160,18 @@ def test_sync_from_redis_routes_in_router_via_fallback():
         )
     )
     pool.sync_from_redis(redis_stub)
+    # Schema still upheld: pool absorbed the remote liveportrait
+    # record over the wire.
+    assert "remote-lp" in pool.records
+    assert pool.records["remote-lp"].engine_id == EngineId.LIVE_PORTRAIT
 
     router = TierRouter(
         registry_path=__import__("pathlib").Path("registry/models.yaml")
     )
     chosen = router.pick_available(Tier.EXPRESS, pool)
-    # In the registry, express has musetalk-v1 primary and
-    # liveportrait-human-v1 fallback; with the musetalk worker
-    # in-flight, the router must select the liveportrait fallback.
-    assert chosen == "liveportrait-human-v1"
+    # Frozen: standard primary busy → None, regardless of other
+    # engines' capacity.
+    assert chosen is None
 
 
 # ----------------------------------------------------------------------

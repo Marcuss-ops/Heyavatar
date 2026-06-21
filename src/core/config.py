@@ -52,10 +52,20 @@ class Settings:
     worker_engine_id: str = "musetalk-v1"
     worker_check_cancel_every_n_frames: int = 8
 
-    # Object store backend: ``fs`` (default) or ``s3``
-    object_store_backend: Literal["fs", "s3"] = "fs"
-    s3_endpoint_url: Optional[str] = None
-    s3_bucket: Optional[str] = None
+    # Distributed heartbeat — FROZEN by Change 3 / ROADMAP.md §1.
+    # The MVP target is single-worker, so the heartbeat daemon
+    # thread in ``workers/gpu_worker/worker.py::_start_redis_heartbeat``
+    # does NOT spin up by default. Operators opting in for a future
+    # multi-worker deploy set this flag via
+    # ``HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT=1``.
+    enable_distributed_heartbeat: bool = False
+
+    # Object store backend: ``fs`` only (S3 frozen by Change 3 /
+    # ROADMAP.md §1). The MVP uses the local filesystem under
+    # ``HEYAVATAR_OBJECT_STORE``. S3 settings below are intentionally
+    # absent from this dataclass — re-introduce them only when
+    # cross-region storage becomes a real production need.
+    object_store_backend: Literal["fs"] = "fs"
 
     # Audio-to-expression bridge backend:
     #   ``dsp``    — keep the pure-Python DSP envelope pipeline (no
@@ -116,8 +126,9 @@ class Settings:
             worker_engine_id=os.environ.get("HEYAVATAR_WORKER_ENGINE", "musetalk-v1"),
             worker_check_cancel_every_n_frames=_env_int("HEYAVATAR_CANCEL_CHECK_EVERY", 8),
             object_store_backend=os.environ.get("HEYAVATAR_OBJECT_STORE_BACKEND", "fs"),
-            s3_endpoint_url=os.environ.get("HEYAVATAR_S3_ENDPOINT"),
-            s3_bucket=os.environ.get("HEYAVATAR_S3_BUCKET"),
+            enable_distributed_heartbeat=_env_bool(
+                "HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT", False
+            ),
             audio_bridge_backend=os.environ.get(  # type: ignore[arg-type]
                 "HEYAVATAR_AUDIO_BRIDGE_BACKEND", "dsp"
             ),

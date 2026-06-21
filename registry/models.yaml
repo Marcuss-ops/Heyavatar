@@ -96,27 +96,25 @@ models:
       Use EchoMimic for "landmark-control" rendering pipelines.
 
 # =====================================================================
-#  Default tier routing (informational; the live router lives in
-#  src/scheduler/router.py and reads from this file).
+#  Default routing profile (Change 3 of slimming plan).
+#
+#  The slimming plan freezes multi-tier routing (Express / Studio /
+#  Premium). The MVP exposes a single ``standard`` profile:
+#
+#    LivePortrait + MuseTalk, 25 FPS, 256×256 face ROI,
+#    H.264 output, prerecorded body template.
+#
+#  Legacy ``tiers:`` blocks are intentionally NOT defined here. The
+#  router (``src/scheduler/routing/router.py``) reads the block below
+#  as the single source of truth and ignores any pre-existing `tiers:`
+#  config that ships with installed deployments.
 # =====================================================================
 
-tiers:
-  express:
-    engine: musetalk-v1
-    fallbacks:
-      - liveportrait-human-v1
-    rationale: Real-time-ish, MIT-licensed, low VRAM; degrades to LivePortrait
-      if all musetalk workers are busy or VRAM-bounded.
-  studio:
-    engine: liveportrait-human-v1
-    fallbacks:
-      - musetalk-v1
-      - echomimic-v1
-    rationale: Half-body with stitched expressions; prep required for
-      commercial use. Higher quality backstops when LivePortrait is busy.
-  premium:
-    engine: echomimic-v1
-    fallbacks: []
-    rationale: Generative, full-anchor control, highest VRAM. No fallback
-      by design — premium work is queued and shed rather than silently
-      downgraded to a lower tier.
+standard:
+  engine: musetalk-v1
+  rationale: >
+    Single MVP profile. LivePortrait flips to its real CUDA path on
+    the GPU worker via the adapter; MuseTalk is the default in case
+    the LivePortrait weights are not yet downloaded. Multi-tier /
+    fallback routing is frozen per docs/REPOSITORY_SLIMMING_PLAN.md §5
+    and ROADMAP.md §1.

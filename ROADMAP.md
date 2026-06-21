@@ -17,29 +17,53 @@ abstractions without a concrete production requirement.
 ### Distributed `WorkerPool` + heartbeat tiers
 - **Why frozen:** deployment target is `1 API · 1 Redis · 1 GPU worker · 1 encoder path`.
 - **What stays:** minimal worker health record `{worker_id, last_seen, engine_id, state}`.
+- **What is gone (post Change 3):**
+  - `api/app/state.py::lifespan` no longer starts the periodic
+    `_start_worker_pool_sync_gatherer` thread.
+  - `workers/gpu_worker/worker.py::_start_redis_heartbeat` is gated
+    behind `Settings.enable_distributed_heartbeat` (default `False`).
+  - `WorkerPool.sync_from_redis` itself is preserved (unit tests
+    rely on the wire schema) but no production code path invokes it.
 - **Re-introduction gate:** a second API process is wired AND a Redis
   cross-process deploy is in production.
-- **Removed in:** Change 3 of `docs/REPOSITORY_SLIMMING_PLAN.md`.
+- **Removed in:** Change 3. Re-introduce by setting
+  `HEYAVATAR_ENABLE_DISTRIBUTED_HEARTBEAT=1` and re-enabling the
+  gatherer call in `lifespan`.
 
 ### `EchoMimic` engine
 - **Why frozen:** MVP uses LivePortrait+Musetalk; license stays Apache-2.0
   but no real adapter ships in MVP.
-- **What stays until Change 3:** provider directory `providers/echomimic/`
-  plus its registration in `providers/__init__.py::PROVIDERS` so the existing
-  engine-id enum stays valid and contract tests still cover
-  `EngineId.ECHO_MIMIC`. The adapter raises `NotImplementedError` on the
-  real path.
-- **Re-introduction gate:** a real `EchoMimicAdapter` is shipped AND it
-  adds visible quality beyond LivePortrait+Musetalk.
-- **Removed in:** Change 3.
+- **What stays:** provider directory `providers/echomimic/` kept on
+  disk and the `EngineId.ECHO_MIMIC` enum value preserved for
+  backwards-compatible engine-id parsing in registry / database
+  payloads.
+- **What is gone (post Change 3):** the registration in
+  `providers/__init__.py::PROVIDERS`. A caller that asks
+  `get_provider(EngineId.ECHO_MIMIC)` now raises `KeyError` with a
+  freeze message; old callers should branch on the supported engines
+  (`LIVE_PORTRAIT`, `MUSE_TALK`).
+- **Re-introduction gate:** a real `EchoMimicAdapter` is shipped AND
+  it adds visible quality beyond LivePortrait+Musetalk.
+- **Removed in:** Change 3 (commit message: `slim(repo): change 3`).
+  Re-introduce by re-registering in `PROVIDERS` and shipping a
+  real-mode adapter body.
 
 ### Full `OpenTelemetry` tracing stack
 - **Why frozen:** OTLP exporters + W3C propagation add a runtime
   dependency the MVP doesn't need.
 - **What stays:** structured JSON logs with
   `job_id`, `avatar_id`, engine id, stage duration, GPU seconds, terminal
-  state, failure reason.
-- **Re-introduction gate:** an OTLP collector is wired by ops.
+  state, failure reason. **W3C traceparent inject/extract on the queue
+  payload** (`propagation.py`) is also kept because it lets a
+  re-introduced collector link child spans to the parent FastAPI
+  request without changing the API surface; it no-ops when the
+  OpenTelemetry SDK is not installed.
+- **What is gone (post Change 3):** `setup_tracing` no longer wires
+  a `TracerProvider` + `BatchSpanProcessor` + `OTLPSpanExporter` in
+  any default path. The module docstring claims the freeze.
+- **Re-introduction gate:** an OTLP collector is wired by ops AND
+  structured logs prove insufficient for at least one operationally
+  critical question.
 - **Removed in:** Change 3.
 
 ### Multi-quality tiers (`Express` / `Studio` / `Premium`)
@@ -67,8 +91,14 @@ abstractions without a concrete production requirement.
 ### S3 / multi-object-store backend
 - **Why frozen:** local filesystem storage (`avatar_packs/`, `body_templates/`,
   `captures/`) covers MVP.
-- **What stays:** `FsObjectStore`; `aioboto3` import is gated.
-- **Re-introduction gate:** cross-region storage is required.
+- **What stays:** `FsObjectStore`; the `ObjectStore` ABC keeps the
+  interface narrow so an `S3ObjectStore` would be a drop-in subclass.
+- **What is gone (post Change 3):** `Settings.object_store_backend`
+  tightened to `Literal["fs"]`; the `s3_endpoint_url` and
+  `s3_bucket` settings are removed. `build_object_store` rejects
+  any non-`fs` backend explicitly.
+- **Re-introduction gate:** cross-region storage is required AND a
+  signed-URL helper for the API is in scope.
 - **Removed in:** Change 3.
 
 ---
