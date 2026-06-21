@@ -179,37 +179,34 @@ def envelopes_to_driving(env: ChunkEnvelope) -> DrivingSignals:
                     blink_flag[i + k] = True
             blink_flag[i] = True
 
-    mouth_aperture = [_smooth_mouth(0.0, env.rms_envelope[i]) for i in range(env.frames)]
-    pitch_baseline = sum(env.pitch_envelope) / max(1, env.frames)
+    mouth_aperture = []
+    prev_ap = 0.0
+    for i in range(env.frames):
+        prev_ap = _smooth_mouth(prev_ap, env.rms_envelope[i])
+        mouth_aperture.append(prev_ap)
+
+    max_ap = max(mouth_aperture) if mouth_aperture else 0.0
+    if max_ap > 0.001:
+        scale_factor = 1.0 / max(0.02, max_ap)
+        mouth_aperture = [min(1.0, val * scale_factor) for val in mouth_aperture]
 
     exp_d: List[float] = []
     for i in range(env.frames):
         # Each frame contributes N_KEYPOINTS * EXPRESSION_DIM offsets.
-        # We start from a frozen neutral pose (zeros) and add:
-        # 1. mouth aperture on lower-lip keypoints (idx 14..17) in y.
-        # 2. small brow (idx 0..3) yaw based on pitch deviation.
-        # 3. head tilt (kp idx 18..20) for first/last frame only (wakes up the avatar).
+        # We start from a frozen neutral pose (zeros) and ONLY add a light
+        # mouth aperture on lower-lip keypoints (idx 14..17) in y.
+        # Everything else is kept completely still (0.0).
         frame_offsets = [0.0] * (N_KEYPOINTS * EXPRESSION_DIM)
         aperture = mouth_aperture[i]
         for kp in range(14, 18):
-            # y component = open mouth; clipping into [0, 1].
-            frame_offsets[kp * EXPRESSION_DIM + 1] = max(0.0, min(1.0, aperture * 0.6))
-        pitch_dev = (env.pitch_envelope[i] - pitch_baseline) / max(1.0, pitch_baseline)
-        for kp in range(4):
-            frame_offsets[kp * EXPRESSION_DIM + 0] = max(-0.2, min(0.2, pitch_dev * 0.05))
-        if i == 0:
-            for kp in range(18, 21):
-                frame_offsets[kp * EXPRESSION_DIM + 0] = 0.02
-        if blink_flag[i]:
-            for kp in (0, 1, 2, 3):
-                # Push brow points down 0.05 to fake a blink closure.
-                frame_offsets[kp * EXPRESSION_DIM + 1] += 0.05
+            # y component = open mouth; clipping with a lighter scale (0.32) for realistic speaking
+            frame_offsets[kp * EXPRESSION_DIM + 1] = max(0.0, min(1.0, aperture * 0.32))
         exp_d.extend(frame_offsets)
 
     return DrivingSignals(
         frames=env.frames,
         exp_d_flat=tuple(exp_d),
-        blink_mask=tuple(blink_flag),
+        blink_mask=tuple([False] * env.frames),
         mouth_aperture=tuple(mouth_aperture),
     )
 

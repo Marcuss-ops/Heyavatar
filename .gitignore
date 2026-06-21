@@ -81,5 +81,5 @@ packs/
 
 # Docs assets kept under version control are an explicit carve-out
 # !docs/assets/*.mp4
-LivePortrait/
+/LivePortrait/
 checkpoints/

@@ -97,9 +97,11 @@ os.environ.setdefault("HEYAVATAR_LIVE_PORTRAIT_SRC", str(_LIVE_PORTRAIT_REPO))
 
 
 def _test_image(tmp_path: Path) -> Path:
-    """Write a real-ish 1x1 PNG for identity preparation."""
+    """Write a real-ish PNG for identity preparation."""
     p = tmp_path / "actor.png"
-    p.write_bytes(_PNG_1x1)
+    from PIL import Image
+    img = Image.new("RGB", (256, 256), color=(255, 0, 0))
+    img.save(p)
     return p
 
 
@@ -215,6 +217,9 @@ def test_engine_loads_in_real_mode(workdir, tmp_path):
 @requires_cuda
 def test_prepare_identity_real_mode(workdir, tmp_path):
     """Verify prepare_identity() produces real (non-mock) assets."""
+    os.environ["HEYAVATAR_MOCK_ENGINE"] = "0"
+    from src.core.config import get_settings
+    get_settings.cache_clear()
     settings = get_settings()
     if settings.mock_engine:
         pytest.skip("HEYAVATAR_MOCK_ENGINE=1")
@@ -247,6 +252,9 @@ def test_prepare_identity_real_mode(workdir, tmp_path):
 @requires_cuda
 def test_full_pipeline_real_mode(workdir, tmp_path):
     """End-to-end: compile identity → render chunk → encode → mp4."""
+    os.environ["HEYAVATAR_MOCK_ENGINE"] = "0"
+    from src.core.config import get_settings
+    get_settings.cache_clear()
     settings = get_settings()
     if settings.mock_engine:
         pytest.skip("HEYAVATAR_MOCK_ENGINE=1")

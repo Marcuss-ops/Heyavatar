@@ -99,66 +99,62 @@ LOG = get_logger("providers.liveportrait")
 
 
 def _import_upstream_live_portrait() -> Any:
-    """Import the upstream ``LivePortraitPipeline``.
+    """Import the upstream ``live_portrait_pipeline`` module.
 
-    Upstream LivePortrait uses relative imports (``from .config ...``)
-    so its ``src/`` directory must be a proper Python package imported
-    as ``src.live_portrait_pipeline`` with the repo *root* (the parent
-    of ``src/``) on ``sys.path``.
-
-    Resolution order:
-
-    1. ``src.live_portrait_pipeline`` — works when ``LivePortrait/``
-       (the repo root) is on ``PYTHONPATH`` and ``src/__init__.py``
-       exists (we create it at clone time if missing).
-    2. ``live_portrait_pipeline`` — legacy flat-path import for
-       deployments that strip relative imports upstream.
-    3. ``HEYAVATAR_LIVE_PORTRAIT_SRC`` — if set, the directory is
-       added to ``sys.path`` and we retry ``src.live_portrait_pipeline``
-       from there.  Set this to the repo *root*, e.g.
-       ``/opt/LivePortrait``, **not** ``/opt/LivePortrait/src``.
-
-    Falls back to ``None`` and lets the caller transition to DEGRADED.
+    To avoid package shadowing with our own ``src/`` directory, we dynamically
+    register the upstream ``LivePortrait/src/`` directory as a unique package
+    named ``liveportrait_upstream`` in ``sys.modules``.
     """
     import importlib
+    import importlib.util
     import sys
+    from pathlib import Path
 
-    # Candidate 1: repo root on PYTHONPATH → import as src.live_portrait_pipeline
-    try:
-        return importlib.import_module("src.live_portrait_pipeline")
-    except ImportError:
-        pass
+    pkg_name = "liveportrait_upstream"
+    module_name = f"{pkg_name}.live_portrait_pipeline"
 
-    # Candidate 2: legacy flat path (someone stripped the package structure)
-    try:
-        return importlib.import_module("live_portrait_pipeline")
-    except ImportError:
-        pass
+    # If already imported, just return it
+    if module_name in sys.modules:
+        return sys.modules[module_name]
 
-    # Candidate 3: HEYAVATAR_LIVE_PORTRAIT_SRC → add to sys.path, retry.
     extra = os.environ.get("HEYAVATAR_LIVE_PORTRAIT_SRC")
-    if extra:
-        # Support both "LivePortrait" (repo root) and "LivePortrait/src"
-        # spellings by checking what the path actually contains.
-        extra_path = Path(extra).resolve()
-        if extra_path.name == "src" and (extra_path.parent / "src").is_dir():
-            # User pointed at the src/ directory — use the parent as the
-            # package root so `import src.live_portrait_pipeline` works.
-            package_root = str(extra_path.parent)
-        else:
-            package_root = str(extra_path)
-        if package_root not in sys.path:
-            sys.path.insert(0, package_root)
-        try:
-            return importlib.import_module("src.live_portrait_pipeline")
-        except ImportError as exc:
-            LOG.warning(
-                "HEYAVATAR_LIVE_PORTRAIT_SRC=%s did not expose src.live_portrait_pipeline: %s",
-                extra,
-                exc,
-            )
+    if not extra:
+        extra = "./LivePortrait"
 
-    return None
+    src_path = Path(extra).resolve()
+    if src_path.name != "src" and (src_path / "src").is_dir():
+        src_path = src_path / "src"
+
+    if not src_path.is_dir():
+        LOG.warning("Upstream src directory not found at: %s", src_path)
+        return None
+
+    # Ensure __init__.py exists in the upstream src directory
+    init_path = src_path / "__init__.py"
+    if not init_path.exists():
+        try:
+            init_path.touch()
+        except Exception as e:
+            LOG.warning("Could not create __init__.py in %s: %s", src_path, e)
+
+    try:
+        spec = importlib.util.spec_from_file_location(
+            pkg_name,
+            str(init_path),
+            submodule_search_locations=[str(src_path)]
+        )
+        if spec is None or spec.loader is None:
+            LOG.warning("Failed to create spec for dynamic package %s", pkg_name)
+            return None
+
+        pkg = importlib.util.module_from_spec(spec)
+        sys.modules[pkg_name] = pkg
+        spec.loader.exec_module(pkg)
+
+        return importlib.import_module(module_name)
+    except Exception as exc:
+        LOG.warning("Failed to import from dynamic package: %s", exc)
+        return None
 
 
 def _import_torch() -> Any:
@@ -341,17 +337,16 @@ class LivePortraitAdapter(AvatarEngine):
             tensor = self._wrapper.prepare_source(img_np).to(self._torch_device)
             # extract_feature_3d returns [1, 32, 16, 64, 64]
             f_s = self._wrapper.extract_feature_3d(tensor)
-            kp_info = self._wrapper.motion_extractor(tensor)  # tuple
-            # upstream get_kp_info returns (exp, kp, pitch, yaw, roll, t, scale)
-            # motion_extractor directly returns the same tuple on the
-            # wrapper; consult the upstream wrapper for the exact field
-            # order, which we here access defensively via named keys when
-            # available, otherwise via positional unpacking.
+            kp_info = self._wrapper.get_kp_info(tensor)
+            # get_kp_info returns a dict with 'exp' and 'kp' keys
+            # and reshapes them to BxNx3. We access them defensively.
             if isinstance(kp_info, dict):
                 exp_s = kp_info["exp"]
                 kp_s = kp_info["kp"]
+                x_s = self._wrapper.transform_keypoint(kp_info)
             else:
                 exp_s, kp_s = kp_info[0], kp_info[1]
+                x_s = kp_s
             # Cheap paste-back matrix: identity affine when no
             # rotation; the true affine is computation-expensive (it
             # depends on the source crop) and we use the unwarped
@@ -368,7 +363,7 @@ class LivePortraitAdapter(AvatarEngine):
                 ).tobytes(),
                 "canonical_keypoints.bin": np.concatenate(
                     [
-                        np.asarray(kp_s.detach().cpu().numpy(), dtype=np.float32),
+                        np.asarray(x_s.detach().cpu().numpy(), dtype=np.float32),
                         np.asarray(exp_s.detach().cpu().numpy(), dtype=np.float32),
                     ]
                 ).tobytes(),
@@ -566,7 +561,7 @@ class LivePortraitAdapter(AvatarEngine):
         f_s, kp_s, _exp_s = _load_source_bundle(identity.pack_path, torch,
                                                 self._torch_device)
         kp_d = _build_driving_keypoints(
-            driving, kp_s, torch, self._torch_device
+            driving, kp_s, torch, self._torch_device, self._wrapper
         )
 
         warped_frames = []
@@ -604,11 +599,11 @@ class LivePortraitAdapter(AvatarEngine):
 
             # Stitching refines driving keypoints per-frame; apply
             # per-frame then stack if upstream supports it.
-            if stitching is not None and hasattr(stitching, "stitching"):
+            if stitching is not None:
                 refined = []
                 for j in range(batch_end - batch_start):
                     kp_d_single = kp_d_batch[j : j + 1]
-                    refined.append(stitching.stitching(kp_s, kp_d_single))
+                    refined.append(self._wrapper.stitching(kp_s, kp_d_single))
                 kp_d_batch = torch.cat(refined, dim=0)
 
             # Repeat source features AND source keypoints across batch
@@ -618,7 +613,7 @@ class LivePortraitAdapter(AvatarEngine):
             kp_s_batch = kp_s.expand(batch_n, -1, -1)
 
             # Single GPU kernel launch for the entire batch.
-            batch_output = warping.warp_decode(f_s_batch, kp_s_batch, kp_d_batch)
+            batch_output = self._wrapper.warp_decode(f_s_batch, kp_s_batch, kp_d_batch)['out']
 
             # Collect frames back.
             for j in range(batch_end - batch_start):
@@ -841,6 +836,7 @@ def _build_driving_keypoints(
     kp_s: Any,
     torch: Any,
     device: Any,
+    wrapper: Any = None,
 ) -> np.ndarray:
     """Combine canonical source keypoints with the expression deltas.
 
@@ -848,6 +844,17 @@ def _build_driving_keypoints(
     apply upstream's full retargeting math; see
     ``docs/MODEL_LICENSES.md`` for the wider TODO list.
     """
+    if wrapper is not None and getattr(wrapper, "stitching_retargeting_module", None) is not None:
+        kp_d_list = []
+        for i in range(driving.frames):
+            aperture = driving.mouth_aperture[i]
+            # Use pre-trained lip retargeting network to get precise mouth keypoint deltas
+            lip_close_ratio = torch.tensor([[0.15, 0.15 + aperture * 0.55]], dtype=torch.float32, device=device)
+            lip_delta = wrapper.retarget_lip(kp_s, lip_close_ratio)
+            kp_d_i = kp_s + lip_delta
+            kp_d_list.append(kp_d_i.detach().cpu().numpy()[0])
+        return np.array(kp_d_list, dtype=np.float32)
+
     src = kp_s.detach().cpu().numpy()[0]  # [21, 3]
     base = np.tile(src[None, ...], (driving.frames, 1, 1))  # [N, 21, 3]
     delta = np.asarray(driving.exp_d_flat, dtype=np.float32).reshape(
