@@ -1,4 +1,7 @@
 gestures:
+  - id: idle
+    name: Idle
+    duration_seconds: 3.0
   - id: idle_small
     name: Idle Small
     duration_seconds: 4.0

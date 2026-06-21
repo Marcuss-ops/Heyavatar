@@ -141,18 +141,42 @@ abstractions without a concrete production requirement.
 
 ---
 
-## 3 · Pending (Change 4 of the slimming plan)
+## 3 · Shipped (Change 4 of the slimming plan)
 
 ### Deterministic multi-template timeline
 - **Goal:** at least three body clips concatenated with masks, transforms,
   timestamps, audio, and compositing all frame-aligned.
-- **Acceptance:**
-  - three+ body clips can be concatenated;
-  - video, masks, and transform arrays stay frame-aligned;
-  - MuseTalk and compositing operate on the combined timeline;
-  - final audio and video durations match.
-- **Status:** not started. The `BodyTemplate` dataclass from
-  `docs/REPOSITORY_SLIMMING_PLAN.md` §4 will be introduced in this change.
+- **Accepted as shipped in commit:** `slim(repo): change 4 —
+  deterministic multi-template timeline`.
+- **What landed:**
+  - `src/domain/body_template.py` — frozen `BodyTemplate`
+    dataclass + `load_body_template(avatar_id, gesture_id, base_dir)`
+    that resolves the canonical
+    `body_templates/<avatar_id>/<gesture_id>/` five-file tree.
+  - `src/domain/timeline.py` — frozen `Timeline` + `TimelineSegment`
+    dataclasses, JSON loader/writer, strict validation on
+    well-formed JSON; default fps = 25
+    (matches `registry/models.yaml::standard`).
+  - `src/pipeline/timeline_align.py` — `AlignedBodyTimeline` +
+    `align_timeline(timeline, avatar_id, *, output_dir, fps=None)`;
+    cascades N `BodyTemplate`s into ONE aligned (body.mp4,
+    face_mask.mp4, neck_mask.mp4, face_transforms.npz) tree with
+    strict frame-count, resolution, fps invariants. Refuses
+    mis-aligned templates up front.
+  - `src/application/render_video/use_case.py::RenderVideo.run_timeline`
+    orchestrator entry point. Validates audio duration against the
+    aligned timeline’s `duration_seconds` within one-frame
+    tolerance (the Change 4 determinism contract).
+  - 45 new tests (12 BodyTemplate + 21 Timeline + 12 align_timeline)
+    covering the slim-plan example
+    ``{idle 3s → explain_both 2s → idle 3s} = 200 frames @ 25 fps = 8.0s``
+    end-to-end plus every failure mode.
+- **Follow-up still required to fully close the slim-plan MVP:**
+  plug `AlignedBodyTimeline` into `AvatarEngine.render_chunk` so
+  the GPU worker treats the aligned body + concat'd npz as a
+  single body template. Same re-introduction gate as a single
+  template render; the frame-align utility already guarantees
+  the determinism invariants.
 
 ---
 

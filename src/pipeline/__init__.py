@@ -1,9 +1,10 @@
 """src.pipeline — canonical pipeline operators for Heyavatar.
 
-Per Change 2 of `docs/REPOSITORY_SLIMMING_PLAN.md` §4 (extended to the
-QC layer) this package is the canonical home for the production
-compositing and post-production-quality primitives. It replaces the
-previous locations of:
+Per Change 2 of `docs/REPOSITORY_SLIMMING_PLAN.md` §4 (extended to
+the QC layer and Change 4's frame-align utility) this package is
+the canonical home for the production compositing, post-production
+quality, and multi-template frame-alignment primitives. It replaces
+the previous locations of:
 
 * the OpenCV face compositor (``providers/compositing/opencv_face/``,
   gone)
@@ -11,6 +12,8 @@ previous locations of:
   gone — :class:`src.quality.exceptions.{CompositeError,
   EncodingError, QualityError}` stays at its original package because
   it is shared across the pipeline path.)
+* the speculative ``src/motion/{composer,resolver,registry,cache_keys}.py``
+  timeline composer that was deleted in Change 1.
 
 Both the runtime path (the GPU worker / orchestrator invoking the
 compositor via the ``contracts.compositor.Compositor`` ABC) and the
@@ -21,7 +24,7 @@ interfaces (``contracts.compositor.Compositor``,
 ``contracts.quality_checker.QualityChecker``) and class names
 (``OpenCVFaceCompositor``, ``VideoQualityChecker``) are unchanged.
 
-The package houses the public surface of these two contracts:
+The package houses the public surface of these contracts:
 
 Compositor:
 
@@ -37,6 +40,13 @@ Quality checker:
 - :func:`probe_video_duration` / :func:`probe_audio_duration` /
   :func:`probe_video_codec` — ffprobe wrappers used internally and by
   tests that need to mock the duration / codec probes.
+
+Multi-template timeline align (Change 4):
+
+- :class:`AlignedBodyTimeline` — frozen output of the align utility.
+- :func:`align_timeline` — cascades N body templates + a
+  :class:`src.domain.timeline.Timeline` into one frame-aligned set
+  of four canonical files on disk.
 
 Adding more concrete compositors / QC providers would introduce an
 ABC subclass per implementation; for the single-MVP envelope the
@@ -66,6 +76,7 @@ from src.pipeline.quality import (
     probe_video_codec,
     probe_video_duration,
 )
+from src.pipeline.timeline_align import AlignedBodyTimeline, align_timeline
 
 __all__ = [
     # Compositor surface
@@ -78,4 +89,7 @@ __all__ = [
     "probe_video_duration",
     "probe_audio_duration",
     "probe_video_codec",
+    # Multi-template timeline surface (Change 4)
+    "AlignedBodyTimeline",
+    "align_timeline",
 ]

@@ -500,3 +500,119 @@ Verification:
   (which added 7 frozen-router tests), Change 2-EXT is a pure
   module-path rewrite; every QC consumer was already covered by the
   baseline 159-pass suite, so no new tests are introduced.
+
+### Added — Repository slimming plan, Change 4 (deterministic multi-template timeline)
+
+Per `docs/REPOSITORY_SLIMMING_PLAN.md` §6 + §10 (Change 4 of the
+slim plan), the MVP lifts the manual multi-body-template timeline
+into a frozen-dataclass surface so the orchestrator can deterministically
+concatenate three-or-more body clips — video frames / face transforms /
+face masks / neck masks / timestamps / audio — at the canonical
+`standard` fps before any LLM-style gesture planner ever ships.
+
+New canonical types (all in `src/domain/`)
+
+- **`src/domain/body_template.py`** (new) — the concrete
+  `BodyTemplate` frozen dataclass (slots=True) with fields
+  `body_video: Path`, `face_mask: Path`, `neck_mask: Path`,
+  `face_transforms: Path`, `metadata: Path`. Per-segment metadata
+  accessors read `avatar_id`, `gesture_id`, `fps`, `total_frames`,
+  `width`, `height`, `status` from `metadata.json` on demand. The
+  module also ships `load_body_template(avatar_id, gesture_id,
+  base_dir="body_templates")` that resolves the canonical
+  `body_templates/<avatar_id>/<gesture_id>/` tree written by
+  `tools/avatar_assets/precompute_video_template.py`.
+- **`src/domain/timeline.py`** (new) — `TimelineSegment` +
+  `Timeline` (frozen dataclasses, slots=True, immutable). The
+  `Timeline` JSON shape matches the slim-plan example
+  verbatim (`{"segments": [{"gesture_id": "...", "duration_seconds":
+  ...}, ...]}`), with an optional top-level `"fps"` (default
+  `25`, matching `registry/models.yaml::standard.rationale`).
+  Helpers: `from_json(path)`, `from_dict(dict)`, `to_json(path)`,
+  `to_dict()`, `is_well_formed()`, `total_duration_seconds()`,
+  `expected_frames()`, `frame_count_for_segment(idx)`. Validation
+  is strict — empty segments, non-positive durations, missing
+  keys, non-positive fps, type mismatches all raise `ValueError`
+  at API load time, not at GPU-worker time.
+
+New frame-align utility (in `src/pipeline/`)
+
+- **`src/pipeline/timeline_align.py`** (new) —
+  `AlignedBodyTimeline` frozen dataclass + `align_timeline(
+  timeline, avatar_id, *, output_dir, fps=None,
+  body_template_loader=load_body_template)`. The utility loads each
+  segment's `BodyTemplate`, validates three strict invariants
+  (per-segment frame count == `round(segment.duration * fps)`,
+  cross-segment resolution equality, fps agreement), and emits FOUR
+  concatenated files at the canonical Timeline fps:
+  `body.mp4`, `face_mask.mp4`, `neck_mask.mp4`, `face_transforms.npz`
+  (with bbox + matrices concatenated along axis 0 and
+  `timestamp_ms` remapped to a strictly monotonic
+  `frame_index * (1000 / fps)` sequence so cross-segment timestamps
+  are seamless).
+- **`src/pipeline/__init__.py`** — re-exports the timeline surface
+  alongside the composite + QC surfaces so callers write
+  `from src.pipeline import AlignedBodyTimeline, align_timeline`.
+
+Orchestrator wiring
+
+- **`src/application/render_video/use_case.py::RenderVideo.run_timeline`**
+  (new) — orchestrator entry point that consumes a `Timeline` +
+  `avatar_id` + `RenderRequest` + `AvatarIdentityHandle` and calls
+  `align_timeline` to materialise the canonical four-file aligned
+  asset tree. After alignment the method checks
+  `|audio.duration - aligned.duration_seconds| <= 1/fps` (the
+  Change-4 determinism contract) and refuses the request at API
+  time if the audio drifts beyond one frame. ffprobe probing
+  failures log a warning and proceed (consistent with the existing
+  `_chunks_for` behaviour) but a non-zero probe that disagrees
+  raises `ValueError` so operators see the discrepancy before
+  GPU worker time.
+
+Registry
+
+- **`registry/gestures.yaml`** — added the canonical `idle` entry
+  (3.0s default) so the slim-plan example timeline
+  ``{"segments": [{"gesture_id": "idle", "duration_seconds": 3.0},
+  ...]}`` resolves under the gesture catalog without an alias.
+
+Tests (40+ new tests)
+
+- **`tests/domain/test_body_template.py`** (new) — 12 tests for
+  `BodyTemplate` construction (frozen), `load_body_template`
+  happy path + 5 missing-file permutations + the metadata accessors
+  + the default-base-dir relative-CWD resolution.
+- **`tests/domain/test_timeline.py`** (new) — 21 tests for
+  `Timeline` JSON round-trip, derived properties
+  (`total_duration_seconds`, `expected_frames`,
+  `frame_count_for_segment`), validation errors on
+  malformed JSON (empty segments, non-positive durations,
+  type mismatches, missing keys, non-positive fps),
+  coercion behaviour, and frozen dataclass guarantees. The
+  slim-plan example JSON is the canonical fixture.
+- **`tests/pipeline/test_timeline_align.py`** (new) — 12 tests
+  driving `align_timeline` against the slim-plan canonical
+  3-segment timeline (75 + 50 + 75 = 200 frames at 25 fps = 8.0s),
+  asserting: total frame count, per-file existence on disk, the
+  npz bbox/matrices/timestamp_ms shapes, strict timestamp
+  monotonicity + correct dt persistence between segments,
+  custom-fps parametrisation, and the three invariant failure
+  modes (per-segment frame-count mismatch, cross-segment
+  resolution mismatch, missing `bbox`/`matrices` keys).
+
+Re-exports
+
+- **`src/domain/__init__.py`** — surfaces `BodyTemplate`,
+  `load_body_template`, `Timeline`, `TimelineSegment`,
+  `DEFAULT_TIMELINE_FPS` alongside the existing domain types.
+
+Roadmap status-bump
+- **`ROADMAP.md` §3** — the “Pending (Change 4 of the slimming plan)”
+  section title is renamed to “Shipped” and the
+  deterministic-timeline bullets now reflect what landed.
+
+Verification:
+  pytest tests/ --ignore=tests/observability \
+    -k "not test_api_metrics and not test_metrics and not test_real_gpu"
+  → 191 passed, 7 deselected (was 159 after Change 2-EXT; +32 from
+  the new timeline align + body template + JSON loader tests).

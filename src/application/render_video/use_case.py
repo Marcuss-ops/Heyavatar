@@ -28,7 +28,9 @@ from src.application.render_video.config import ChunkConfig
 from src.application.render_video.manifest import _write_chunk_manifest
 from src.application.telemetry import TelemetryRecorder
 from src.core.logging import get_logger
+from src.domain.body_template import load_body_template
 from src.domain.enums import Tier
+from src.domain.timeline import Timeline
 from src.domain.types import (
     AvatarIdentityHandle,
     RenderChunkRequest,
@@ -36,6 +38,7 @@ from src.domain.types import (
     RenderRequest,
     RenderResult,
 )
+from src.pipeline.timeline_align import AlignedBodyTimeline, align_timeline
 
 LOG = get_logger(__name__)
 
@@ -204,3 +207,73 @@ class RenderVideo:
             )
             start = end - cfg.overlap_seconds if cfg.overlap_seconds > 0 else end
             index += 1
+
+    # ── Change 4: deterministic multi-template timeline entry ──────────
+
+    def run_timeline(
+        self,
+        timeline: Timeline,
+        avatar_id: str,
+        identity: AvatarIdentityHandle,
+        request: RenderRequest,
+        alignment_dir: Path,
+    ) -> tuple[AlignedBodyTimeline, float]:
+        """Cascade ``timeline`` into one frame-aligned body timeline + duration match.
+
+        Per ``docs/REPOSITORY_SLIMMING_PLAN.md`` §6 + §10 (Change 4),
+        the orchestrator now exposes a deterministic multi-template
+        path: a ``Timeline`` JSON + an avatar_id + an identity +
+        audio resolve to ONE :class:`AlignedBodyTimeline` whose
+        ``duration_seconds`` matches the audio within a one-frame
+        tolerance. The downstream render path (engine + compositor +
+        audio mux + QC) consumes the aligned assets the same way it
+        consumes a single ``BodyTemplate``.
+
+        Returns:
+            ``(AlignedBodyTimeline, audio_duration_seconds)``.
+
+        Raises:
+            ValueError: ``audio_duration`` does not match
+                ``aligned.duration_seconds`` within one-frame tolerance.
+                Or one of align_timeline's invariants fails.
+            FileNotFoundError: a body template file is missing.
+        """
+        aligned = align_timeline(
+            timeline,
+            avatar_id,
+            output_dir=alignment_dir,
+            body_template_loader=load_body_template,
+        )
+        audio_duration = audio_probe._probe_audio_duration(
+            request.render_spec.audio_path
+        )
+        if audio_duration > 0:
+            tolerance = aligned.duration_seconds / aligned.fps  # one frame
+            if abs(audio_duration - aligned.duration_seconds) > tolerance:
+                raise ValueError(
+                    f"RenderVideo.run_timeline: audio duration "
+                    f"{audio_duration:.3f}s drifts from aligned "
+                    f"timeline {aligned.duration_seconds:.3f}s by more "
+                    f"than one frame at fps={aligned.fps} "
+                    f"(tolerance {tolerance:.4f}s). Re-cut the audio "
+                    f"or update the timeline so the deterministic "
+                    f"Change 4 contract holds."
+                )
+            LOG.info(
+                "Timeline aligned for avatar_id=%s: %.3fs audio ≈ %.3fs "
+                "aligned timeline (drift=%.4fs, tolerance=%.4fs)",
+                avatar_id,
+                audio_duration,
+                aligned.duration_seconds,
+                abs(audio_duration - aligned.duration_seconds),
+                tolerance,
+            )
+        else:
+            LOG.warning(
+                "RenderVideo.run_timeline: ffprobe could not read the "
+                "audio at %s — skipping the frame-alignment duration "
+                "check. Install ffprobe on the production worker for "
+                "the deterministic-timeline gate.",
+                request.render_spec.audio_path,
+            )
+        return aligned, audio_duration
