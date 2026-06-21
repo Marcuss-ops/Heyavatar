@@ -845,14 +845,83 @@ def _build_driving_keypoints(
     ``docs/MODEL_LICENSES.md`` for the wider TODO list.
     """
     if wrapper is not None and getattr(wrapper, "stitching_retargeting_module", None) is not None:
+        import math
         kp_d_list = []
+        fps = 25
+        blink_frames = -1
+        
         for i in range(driving.frames):
             aperture = driving.mouth_aperture[i]
-            # Use pre-trained lip retargeting network to get precise mouth keypoint deltas
+            
+            # 1. Lip retargeting
             lip_close_ratio = torch.tensor([[0.15, 0.15 + aperture * 0.55]], dtype=torch.float32, device=device)
             lip_delta = wrapper.retarget_lip(kp_s, lip_close_ratio)
-            kp_d_i = kp_s + lip_delta
-            kp_d_list.append(kp_d_i.detach().cpu().numpy()[0])
+            
+            # 2. Eye retargeting (blinking)
+            # Trigger a blink every 90 frames (~3.6 seconds)
+            if i % 90 == 0 and blink_frames < 0:
+                blink_frames = 0
+            
+            if blink_frames >= 0 and blink_frames <= 5:
+                # Blink weights: fully open (1.0), closing (0.6), fully closed (0.0), opening (0.8)
+                blink_weights = [0.6, 0.2, 0.0, 0.0, 0.4, 0.8]
+                blink_val = blink_weights[blink_frames]
+                blink_frames += 1
+            else:
+                blink_val = 1.0
+                blink_frames = -1
+                
+            target_eye = 0.12 + blink_val * 0.23
+            eye_close_ratio = torch.tensor([[0.35, 0.35, target_eye]], dtype=torch.float32, device=device)
+            eye_delta = wrapper.retarget_eye(kp_s, eye_close_ratio)
+            
+            # Combine deltas
+            kp_d_i = kp_s + lip_delta + eye_delta
+            kp_d_i_np = kp_d_i.detach().cpu().numpy()[0]
+            
+            # 3. Subtle head pose micro-movements (rotation and translation)
+            p_deg = 0.8 * math.sin(2 * math.pi * 0.35 * i / fps)
+            y_deg = 0.8 * math.cos(2 * math.pi * 0.25 * i / fps)
+            r_deg = 0.5 * math.sin(2 * math.pi * 0.45 * i / fps)
+            
+            p = math.radians(p_deg)
+            y = math.radians(y_deg)
+            r = math.radians(r_deg)
+            
+            cos_p, sin_p = math.cos(p), math.sin(p)
+            cos_y, sin_y = math.cos(y), math.sin(y)
+            cos_r, sin_r = math.cos(r), math.sin(r)
+            
+            Rx = np.array([
+                [1, 0, 0],
+                [0, cos_p, -sin_p],
+                [0, sin_p, cos_p]
+            ], dtype=np.float32)
+            Ry = np.array([
+                [cos_y, 0, sin_y],
+                [0, 1, 0],
+                [-sin_y, 0, cos_y]
+            ], dtype=np.float32)
+            Rz = np.array([
+                [cos_r, -sin_r, 0],
+                [sin_r, cos_r, 0],
+                [0, 0, 1]
+            ], dtype=np.float32)
+            
+            R = Rx @ Ry @ Rz
+            
+            # Rotate keypoints around their centroid
+            centroid = np.mean(kp_d_i_np, axis=0)
+            kp_d_i_np = (kp_d_i_np - centroid) @ R.T + centroid
+            
+            # Small translation/sway
+            tx = 0.005 * math.sin(2 * math.pi * 0.2 * i / fps)
+            ty = 0.005 * math.cos(2 * math.pi * 0.15 * i / fps)
+            kp_d_i_np[:, 0] += tx
+            kp_d_i_np[:, 1] += ty
+            
+            kp_d_list.append(kp_d_i_np)
+            
         return np.array(kp_d_list, dtype=np.float32)
 
     src = kp_s.detach().cpu().numpy()[0]  # [21, 3]
