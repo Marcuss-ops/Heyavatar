@@ -616,3 +616,114 @@ Verification:
     -k "not test_api_metrics and not test_metrics and not test_real_gpu"
   → 191 passed, 7 deselected (was 159 after Change 2-EXT; +32 from
   the new timeline align + body template + JSON loader tests).
+
+### Added — Change 4 reference timeline + golden-signal integration test
+
+Per the orchestrator's Change-4 acceptance bullet ("the orchestrator
+has a deterministic golden signal for end-to-end multi-template
+runs"), the canonical reference timeline shape is now committed
+under `docs/examples/`, and a new integration test exercises
+`RenderVideo.run_timeline` end-to-end against a synthesised
+`body_templates` tree + an 8.0-second silent WAV.
+
+- **`docs/examples/timeline_three_segment.json`** (new) — the
+  reference timeline JSON that operators and integration tests
+  anchor against:
+  ```json
+  {
+    "fps": 25,
+    "segments": [
+      {"gesture_id": "idle", "duration_seconds": 3.0},
+      {"gesture_id": "explain_both", "duration_seconds": 2.0},
+      {"gesture_id": "idle", "duration_seconds": 3.0}
+    ]
+  }
+  ```
+  Total: 8.0 s × 25 fps = 200 frames. The file carries an inline
+  `_comment` block so operators see the rationale and the
+  mathematical invariant without flipping away from the JSON.
+- **`tests/integration/test_run_timeline_integration.py`** (new) —
+  end-to-end golden-signal test against the reference JSON:
+  - Builds a 3-template synthesised `body_templates/alice/{idle,explain_both}/`
+    tree at 64×64×25fps (75, 50, 75 frames).
+  - Synthesises an 8.0 s silent PCM WAV so the orchestrator's
+    audio-vs-aligned-drift gate is exercised deterministically.
+  - Loads `Timeline` via `Timeline.from_json(EXAMPLE_JSON)`.
+  - Patches `load_body_template` to point at the synthesised tree
+    (via `__globals__` so the patch reaches the orchestrator's call
+    site cleanly).
+  - Invokes `RenderVideo.run_timeline(timeline, avatar_id, identity,
+    request, alignment_dir)`.
+  - Asserts: 200 total frames, 25 fps, 64×64 resolution, 8.0 s
+    duration, all 5 aligned files on disk, metadata.json
+    segments breakdown mirrors the JSON, npz bbox/matrices dtype
+    `float32` with strict timestamp monotonicity at 40 ms dt.
+  - Second test forces a 30.0 s audio drift via `monkeypatch` and
+    verifies `run_timeline` raises `ValueError("drifts ... aligned
+    timeline")` — exercises the audio-drift gate even when ffprobe
+    is unavailable.
+
+Verification:
+  pytest tests/integration/test_run_timeline_integration.py -v
+  → 2 passed in 0.45s.
+
+Verification (cumulative on the Change 4 baseline):
+  pytest tests/ --ignore=tests/observability \
+    -k "not test_api_metrics and not test_metrics and not test_real_gpu"
+  → 225 passed, 7 deselected (was 223 after the LOW follow-up amend;
+  +2 from the new reference timeline + integration test).
+
+### Hardened — Change 4 reference-timeline follow-up amends
+
+Three subsequent `--amend` cycles folded reviewer-flagged
+hardenings back into the golden-signal commit. They sit inside
+the same commit on `main` for traceability:
+
+1. **Test isolation** — the happy-path test now uses
+   `monkeypatch.setattr("src.application.render_video.use_case.load_body_template", …)`
+   instead of mutating `run_timeline.__globals__["load_body_template"]`
+   directly; `monkeypatch` guarantees restoration at fixture teardown
+   so the previous `__globals__` mutation no longer leaks across the
+   pytest suite.
+2. **ABC compliance on `_StubEngine`** — the engine stub now
+   inherits from `contracts.avatar_engine.AvatarEngine`. All four
+   abstract methods (`load`, `unload`, `prepare_identity`,
+   `render_chunk`) are implemented and raise
+   `:class:`NotImplementedError`` so any future addition of
+   `engine.X()` calls inside `run_timeline` fails LOUDLY at
+   abstract-method dispatch instead of silently no-opping.
+3. **Synth landmarks coverage** — `_synth_template` now writes a
+   `(N, 478, 3)` `landmarks` array in `face_transforms.npz`,
+   mirroring `tools/avatar_assets/precompute_video_template.py`'s
+   real precompute output. This exercises
+   `align_timeline`'s `lmk_parts.append` + dtype-normalise
+   branch end-to-end at the integration level (previously the
+   branch was unreachable from this golden-signal run).
+4. **Lax-from_dict contract pin** — the dead-code
+   `_EXPECTED_LAX_FROM_DICT` string constant was removed and
+   replaced with an inline Step-4a contract assertion: the
+   reference JSON's `_comment` block round-trips through
+   `Timeline.from_dict(...).to_dict()` to a canonical
+   `{"fps": 25, "segments": [...]}` shape. If the loader ever
+   tightens (or a future reference JSON edit breaks the
+   contract), the assertion fails loudly.
+5. **Landmarks invariant assertions + finiteness** — Step 11 of
+   the happy-path test now asserts `data["landmarks"].shape ==
+   (200, 478, 3)`, `data["landmarks"].dtype == np.float32`, AND
+   `np.all(np.isfinite(data["landmarks"]))`. The third assertion
+   is the one that gives the golden signal real teeth — it
+   catches silent regressions where the dtype-normalise branch
+   writes zeros / NaNs without breaking the shape or dtype
+   contract.
+
+Python-side: the `_StubEngine` shape matches the production
+ABC so adding `engine.X()` calls inside `run_timeline` is now a
+TypeError on dispatch, not a silent AttributeError on duck
+typing.
+
+Verification:
+  pytest tests/ --ignore=tests/observability \
+    -k "not test_api_metrics and not test_metrics and not test_real_gpu"
+  → 225 passed, 7 deselected (test count unchanged — three
+  review cycles tightened the existing 2 integration tests
+  without introducing new ones).

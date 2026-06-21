@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Canonical reference timeline for the Change-4 deterministic",
+    "multi-template orchestrator pathway. This file is loaded by",
+    "tests/integration/test_run_timeline_integration.py and serves",
+    "as the orchestrator's golden signal for end-to-end acceptance.",
+    "",
+    "idempotent_total_duration_seconds = 3.0 + 2.0 + 3.0 = 8.0",
+    "idempotent_total_frames_at_25fps = 200",
+    "",
+    "Per docs/REPOSITORY_SLIMMING_PLAN.md §6 + §10 (Change 4):",
+    "video / masks / transforms / timestamps / audio must remain",
+    "frame-aligned across the three segments BEFORE any LLM-style",
+    "gesture planner is wired in. This JSON is the deterministic",
+    "shape that operators and integration tests anchor against."
+  ],
+  "fps": 25,
+  "segments": [
+    {
+      "gesture_id": "idle",
+      "duration_seconds": 3.0
+    },
+    {
+      "gesture_id": "explain_both",
+      "duration_seconds": 2.0
+    },
+    {
+      "gesture_id": "idle",
+      "duration_seconds": 3.0
+    }
+  ]
+}
