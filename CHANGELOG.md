@@ -433,3 +433,70 @@ Verification:
   pytest tests/ --ignore=tests/observability \
     -k "not test_api_metrics and not test_metrics and not test_real_gpu"
   → 159 passed, 7 deselected.
+
+### Changed — Repository slimming plan, Change 2-EXT (QC relocation)
+
+The Change 2 mandate in `docs/REPOSITORY_SLIMMING_PLAN.md` §4 also
+covers the post-production QC layer: only the abstract contract is
+kept at the package level — the concrete implementation moves into
+`src/pipeline/` alongside the production compositor. This change
+relocates the concrete QC as the canonical QC module referenced by
+Change 1's `contracts/quality_checker.py::QualityChecker` ABC note.
+Pipeline behaviour is unchanged.
+
+- **New canonical home** `src/pipeline/quality.py` exporting
+  `VideoQualityChecker` (concrete subclass of
+  `contracts.quality_checker.QualityChecker`) plus the low-level
+  helpers `debug_green_ratio`, `mean_luminance`,
+  `probe_video_duration`, `probe_audio_duration`, `probe_video_codec`.
+  The class body is source-identical to the previous
+  `src/quality/video_quality.py` (same imports, same signature,
+  same `__all__`); line endings may differ because the file was
+  re-saved on the new path. Pytest parity is the meaningful
+  invariant. The module docstring points back to the old path for
+  migration.
+- **`src/pipeline/__init__.py` re-exports** the full pipeline QC
+  surface alongside the compositor:
+  `VideoQualityChecker`, `debug_green_ratio`, `mean_luminance`,
+  `probe_video_duration`, `probe_audio_duration`,
+  `probe_video_codec`. Callers now write
+  `from src.pipeline import (
+       OpenCVFaceCompositor, VideoQualityChecker, debug_green_ratio,
+   )`.
+- **Removed** the now-empty concrete-QC source file
+  `src/quality/video_quality.py`.
+- **`src/quality/__init__.py` slimmed down** to the domain
+  exceptions only — `CompositeError`, `EncodingError`, `QualityError` —
+  because those exceptions are shared across the QC and compositor
+  paths and the compositing exception import
+  (`from src.quality.exceptions import CompositeError`) stays
+  unchanged inside `src/pipeline/compositor.py`. The concrete
+  `VideoQualityChecker` no longer lives at `src.quality.*`.
+- **Updated importers** to read from the canonical path:
+  - `tools/avatar_assets/render_clean_composite.py` (production-style
+    render tool; QC is the third stage after compositing + mux).
+  - `tests/integration/test_clean_composite_pipeline.py` —
+    `VideoQualityChecker` + `debug_green_ratio` import,
+    plus three `monkeypatch.setattr("src.quality.video_quality.…", …)`
+    call sites rewritten to `"src.pipeline.quality.…"`.
+  - `tests/compositing/test_debug_disabled.py` — `debug_green_ratio`
+    import moved to the canonical pipeline surface.
+  - `tests/quality/test_green_overlay_detector.py` — same.
+  - `tests/quality/test_duration_validation.py` — class import +
+    6 monkeypatch target rewrites.
+  - `tests/quality/test_black_frame_detector.py` — class + helper
+    imports moved to the canonical pipeline surface.
+- **`src/quality/exceptions.py` untouched** — the domain-exception
+  module stays at its original location so the failure-recovery
+  semantics that `src/pipeline/compositor.py` and `render_clean_composite.py`
+  rely on are unchanged.
+- **`tests/quality/__init__.py`** still imports nothing new; the
+  package marker remains valid.
+
+Verification:
+  pytest tests/ --ignore=tests/observability \
+    -k "not test_api_metrics and not test_metrics and not test_real_gpu"
+  → 159 passed, 7 deselected. Parity is expected — unlike Change 3
+  (which added 7 frozen-router tests), Change 2-EXT is a pure
+  module-path rewrite; every QC consumer was already covered by the
+  baseline 159-pass suite, so no new tests are introduced.

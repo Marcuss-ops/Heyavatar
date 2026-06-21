@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 import pytest
 
-from src.quality.video_quality import mean_luminance
+from src.pipeline import mean_luminance
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ class TestBlackFrameDetection:
     def test_all_black_video_triggers_failure(self, tmp_path: Path):
         """All-black video → FAILED_QC_BLACK_FRAMES."""
         from contracts.quality_checker import QCRequest
-        from src.quality.video_quality import VideoQualityChecker
+        from src.pipeline import VideoQualityChecker
 
         video = tmp_path / "black.mp4"
         audio = tmp_path / "audio.wav"
@@ -96,7 +96,7 @@ class TestBlackFrameDetection:
     def test_no_black_frames_passes(self, tmp_path: Path):
         """Video with all grey frames must pass the black-frame check."""
         from contracts.quality_checker import QCRequest
-        from src.quality.video_quality import VideoQualityChecker
+        from src.pipeline import VideoQualityChecker
 
         video = tmp_path / "grey.mp4"
         audio = tmp_path / "audio.wav"

@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from contracts.quality_checker import QCRequest
-from src.quality.video_quality import VideoQualityChecker
+from src.pipeline.quality import VideoQualityChecker
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,9 +60,9 @@ class TestDurationValidation:
         )
 
         with (
-            patch("src.quality.video_quality.probe_video_duration", return_value=video_dur),
-            patch("src.quality.video_quality.probe_audio_duration", return_value=audio_dur),
-            patch("src.quality.video_quality.probe_video_codec",    return_value="h264"),
+            patch("src.pipeline.quality.probe_video_duration", return_value=video_dur),
+            patch("src.pipeline.quality.probe_audio_duration", return_value=audio_dur),
+            patch("src.pipeline.quality.probe_video_codec",    return_value="h264"),
         ):
             return checker.check_quality(request)
 
@@ -116,9 +116,9 @@ class TestDurationValidation:
         request = QCRequest(video_path=video, audio_path=audio, sample_frames=5)
 
         with (
-            patch("src.quality.video_quality.probe_video_duration", return_value=None),
-            patch("src.quality.video_quality.probe_audio_duration", return_value=None),
-            patch("src.quality.video_quality.probe_video_codec",    return_value="h264"),
+            patch("src.pipeline.quality.probe_video_duration", return_value=None),
+            patch("src.pipeline.quality.probe_audio_duration", return_value=None),
+            patch("src.pipeline.quality.probe_video_codec",    return_value="h264"),
         ):
             result = checker.check_quality(request)
 

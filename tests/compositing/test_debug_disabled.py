@@ -19,8 +19,7 @@ import numpy as np
 import pytest
 
 from contracts.compositor import CompositeRequest
-from src.pipeline import OpenCVFaceCompositor
-from src.quality.video_quality import debug_green_ratio
+from src.pipeline import OpenCVFaceCompositor, debug_green_ratio
 
 
 # ─────────────────────────────────────────────────────────────────────────────

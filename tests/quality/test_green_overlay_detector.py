@@ -1,4 +1,4 @@
-"""Unit tests for the debug_green_ratio() helper in src.quality.video_quality.
+"""Unit tests for the debug_green_ratio() helper in src.pipeline.quality.
 
 Tests cover:
 - Pure green frame  → ratio > threshold
@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.quality.video_quality import debug_green_ratio
+from src.pipeline import debug_green_ratio
 
 # HSV green range used by the detector: H∈[35,90], S>120, V>80
 # BGR equivalent for a pure high-saturation green: (0, 255, 0) in BGR

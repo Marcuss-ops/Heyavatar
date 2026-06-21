@@ -1,5 +1,14 @@
 """VideoQualityChecker — six-point post-production QC for composited videos.
 
+**Canonical location** (per Change 2-EXT of
+``docs/REPOSITORY_SLIMMING_PLAN.md`` §4, extending the original
+Change 2 compositor move to the QC layer): ``src/pipeline/quality.py``.
+The previous home at ``src/quality/video_quality.py`` has been deleted;
+both the runtime path (the GPU worker / ``src/application``
+orchestrator via the ``contracts.quality_checker.QualityChecker`` ABC)
+and the offline preview tool import from here. Contract and class name
+are unchanged.
+
 Checks (in order):
   A. Debug green overlay detection
   B. Black frame ratio
@@ -10,7 +19,7 @@ Checks (in order):
 
 Usage::
 
-    from src.quality.video_quality import VideoQualityChecker
+    from src.pipeline.quality import VideoQualityChecker
     from contracts.quality_checker import QCRequest
 
     checker = VideoQualityChecker()

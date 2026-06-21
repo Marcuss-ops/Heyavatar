@@ -38,7 +38,7 @@ import pytest
 from contracts.compositor import CompositeRequest
 from contracts.quality_checker import QCRequest
 from src.pipeline import OpenCVFaceCompositor
-from src.quality.video_quality import VideoQualityChecker, debug_green_ratio
+from src.pipeline.quality import VideoQualityChecker, debug_green_ratio
 
 requires_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None,
@@ -190,9 +190,9 @@ class TestCleanCompositePipeline:
         checker = VideoQualityChecker()
         expected_duration = n_frames / 25.0
         with (
-            patch("src.quality.video_quality.probe_video_duration", return_value=expected_duration),
-            patch("src.quality.video_quality.probe_audio_duration", return_value=expected_duration),
-            patch("src.quality.video_quality.probe_video_codec",    return_value="h264"),
+            patch("src.pipeline.quality.probe_video_duration", return_value=expected_duration),
+            patch("src.pipeline.quality.probe_audio_duration", return_value=expected_duration),
+            patch("src.pipeline.quality.probe_video_codec",    return_value="h264"),
         ):
             qc_result = checker.check_quality(QCRequest(
                 video_path    = final,
