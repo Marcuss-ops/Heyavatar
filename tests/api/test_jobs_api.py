@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from api.app import create_app
+from api.app.factory import create_app
 from contracts.job_queue import JobState, RenderJob
 from src.domain.types import RenderJobId
 from tests._fixtures import PNG_1X1 as _PNG_1x1

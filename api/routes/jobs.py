@@ -39,7 +39,7 @@ def _new_job_id(client_reference: Optional[str]) -> RenderJobId:
 
 def _inject_traceparent(payload: dict) -> dict:
     try:
-        from src.observability.context import inject_traceparent
+        from src.observability.distributed.propagation import inject_traceparent
         return inject_traceparent(payload)
     except ImportError:
         return payload
@@ -57,7 +57,7 @@ def submit_job(payload: JobSubmitRequest, request: Request) -> JobSubmitResponse
 
     # Server-kind span so the producer side of the trace is linkable.
     try:
-        from src.observability.tracing import get_tracer
+        from src.observability.distributed.tracing import get_tracer
         tracer = get_tracer("api.jobs")
         with tracer.start_as_current_span(
             "api.submit_job",
@@ -87,7 +87,7 @@ def submit_job(payload: JobSubmitRequest, request: Request) -> JobSubmitResponse
         state.job_repo.upsert(job)
 
     try:
-        from src.observability.metrics import record_terminal
+        from src.observability.metrics.recorders import record_terminal
         record_terminal(state="pending", tier=str(tier_value))
     except ImportError:
         pass
@@ -111,7 +111,7 @@ def cancel_job(job_id: str, request: Request) -> Response:
     state.queue.cancel(job_id_t)
     state.job_repo.mark(job_id_t, JobState.CANCELLED)
     try:
-        from src.observability.metrics import record_terminal
+        from src.observability.metrics.recorders import record_terminal
         record_terminal(state="cancelled", tier="express")
     except ImportError:
         pass

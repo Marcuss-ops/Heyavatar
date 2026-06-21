@@ -16,7 +16,7 @@ import pytest
 
 from contracts.job_queue import JobState, QueueHandle, RenderJob
 from src.domain.types import RenderJobId
-from src.scheduler.queue import RedisJobQueue
+from src.scheduler.queue.redis import RedisJobQueue
 
 
 # ── redis-module mock (needed because ``redis`` is not installed) ──

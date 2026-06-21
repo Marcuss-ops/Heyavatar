@@ -1,0 +1,115 @@
+# =============================================================================
+#  Heyavatar — production compose definition
+#  -----------------------------------------------------------------------------
+#  Services:
+#    redis        — queue backend + worker heartbeats
+#    api          — stateless FastAPI gateway (scaled to N replicas)
+#    gpu-worker   — heavy worker that owns the GPU (CUDA required)
+#
+#  NOTE: encoding (ffmpeg concat + audio mux) happens INLINE inside the
+#  gpu-worker process via workers.encoding_worker.worker.EncodingWorker,
+#  so no separate encoder service is launched here. If you want to
+#  off-load encoding to a no-GPU sidecar, add a workers/encoding_worker/cli.py
+#  Redis SUBSCRIBE loop and re-introduce that service.
+#
+#  Topology: every stateful connection goes through Redis. The gateway
+#  publishes render jobs into the queue, gpu-workers compete for them
+#  via workers.gpu_worker.process.process handler.
+#
+#  Production note: scale `gpu-worker` per available GPU; one process
+#  per CUDA device. The worker binds itself to one engine via $ENGINE_ID.
+# =============================================================================
+
+x-common-env: &common-env
+  REDIS_URL: redis://redis:6379/0
+  HEYAVATAR_QUEUE_BACKEND: redis
+  HEYAVATAR_MOCK_ENGINE: "0"
+  HEYAVATAR_PACK_DIR: /var/heyavatar/packs
+  HEYAVATAR_CAPTURE_DIR: /var/heyavatar/captures
+  HEYAVATAR_OBJECT_STORE: /var/heyavatar/object_store
+  PYTHONUNBUFFERED: "1"
+  LOG_LEVEL: INFO
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      target: api
+    image: heyavatar-api:${HEYAVATAR_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - pack-data:/var/heyavatar/packs
+      - capture-data:/var/heyavatar/captures
+    healthcheck:
+      test: ["CMD", "python", "ops/healthcheck.py", "api"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  gpu-worker:
+    build:
+      context: .
+      target: gpu-worker
+    image: heyavatar-gpu-worker:${HEYAVATAR_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      ENGINE_ID: ${ENGINE_ID:-liveportrait-human-v1}
+      HEYAVATAR_WORKER_ID: ${WORKER_ID:-gpu-1}
+      HEYAVATAR_WORKER_METRICS_PORT: "9100"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      HEYAVATAR_LIVE_PORTRAIT_CHECKPOINTS: /var/heyavatar/checkpoints/liveportrait
+      HEYAVATAR_SKIP_SHA256_VERIFY: ${HEYAVATAR_SKIP_SHA256_VERIFY:-0}
+    ports:
+      - "9100:9100"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - pack-data:/var/heyavatar/packs
+      - capture-data:/var/heyavatar/captures
+      - checkpoint-data:/var/heyavatar/checkpoints
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${NVIDIA_GPU_COUNT:-1}
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "ops/healthcheck.py", "gpu-worker"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  redis-data:
+  pack-data:
+  capture-data:
+  object-store-data:
+  checkpoint-data:

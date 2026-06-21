@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pytest
 
 from contracts.job_queue import JobState, QueueHandle, RenderJob
-from src.scheduler.queue import InMemoryJobQueue
+from src.scheduler.queue.memory import InMemoryJobQueue
 from src.domain.types import RenderJobId
 
 

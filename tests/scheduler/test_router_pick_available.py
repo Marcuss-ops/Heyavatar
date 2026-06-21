@@ -6,8 +6,8 @@ import pytest
 
 from contracts.avatar_engine import EngineHealth, EngineState
 from src.domain.enums import EngineId, Tier
-from src.scheduler.router import TierRouter
-from src.scheduler.worker_pool import WorkerPool, WorkerRecord
+from src.scheduler.routing.router import TierRouter
+from src.scheduler.routing.worker_pool import WorkerPool, WorkerRecord
 
 
 def _make_pool(records: list[WorkerRecord]) -> WorkerPool:

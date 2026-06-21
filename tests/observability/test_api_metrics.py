@@ -31,7 +31,7 @@ def _has_prometheus_client() -> bool:
 @pytest.mark.skipif(not _has_prometheus_client(), reason="prometheus_client not installed")
 def test_metrics_endpoint_exposes_our_metrics() -> None:
     from fastapi.testclient import TestClient
-    from api.app import create_app
+    from api.app.factory import create_app
 
     app = create_app()
     client = TestClient(app)
@@ -45,7 +45,7 @@ def test_metrics_endpoint_exposes_our_metrics() -> None:
 @pytest.mark.skipif(not _has_prometheus_client(), reason="prometheus_client not installed")
 def test_request_latency_histogram_observes_calls() -> None:
     from fastapi.testclient import TestClient
-    from api.app import create_app
+    from api.app.factory import create_app
     from prometheus_client import REGISTRY as _REG
 
     app = create_app()

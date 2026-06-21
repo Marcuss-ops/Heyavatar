@@ -15,7 +15,7 @@ import pytest
 
 from contracts.job_queue import JobState, RenderJob
 from src.domain.types import RenderJobId
-from src.storage.jobs import RedisJobRepository
+from src.storage.jobs.redis import RedisJobRepository
 
 
 # ── helpers ─────────────────────────────────────────────────────────

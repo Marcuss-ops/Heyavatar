@@ -63,6 +63,71 @@ code with the following contractual behaviours:
    — the hybrid reader in the adapter falls back to identity
    keypoints when the entry is absent.
 
+## Production-Safe Path for LivePortrait (`commercial_use: true`)
+
+To unblock commercial deployment, the following must all hold:
+
+1. **MediaPipe replaces InsightFace.** ✅ DONE — see
+   `providers/liveportrait/adapter/_mediapipe.py` and the gate test
+   `tests/smoke/test_real_gpu/test_mediapipe_identity.py`. The
+   cascade is MediaPipe first → OpenCV Haar fallback → center crop
+   last; the chosen detector is recorded in `identity_meta.json`.
+2. **Audio-bridge neural replacement.** ✅ DONE — the
+   `providers/liveportrait/audio_bridge/` package now dispatches
+   between the legacy DSP bridge (`HEYAVATAR_AUDIO_BRIDGE_BACKEND=dsp`)
+   and SadTalker Audio2Motion (`HEYAVATAR_AUDIO_BRIDGE_BACKEND=neural`).
+   See `providers/liveportrait/audio_bridge/sadtalker.py` for the
+   import contract and `providers/liveportrait/audio_bridge/projection.py`
+   for the 3DMM(50) → LP(21, 3) projection (calibrated placeholder;
+   real W matrix ships via the GPU-worker calibration step). SadTalker
+   weights are trained on LRW + VoxCeleb (non-commercial research
+   corpora), so the **weights** themselves are non-commercial —
+   `liveportrait-human-v1.commercial_use` stays `false` for now.
+3. **Pin every checkpoint SHA256** in `registry/models.yaml` — the
+   current `TBD` markers block supply-chain trust. Run the new
+   `tests/providers/test_musetalk_real_mode.py::test_musetalk_checkpoint_verify_policy`
+   branch with the SHA pins populated.
+4. **Pass `tests/contracts/` AND `tests/smoke/test_real_gpu/test_pipeline.py`
+   in real (non-mock) mode.** The new
+   `test_pipeline.py::_lower_face_ssd` check partitions the rendered
+   mp4 into silence/speech windows and asserts the per-frame pixel
+   SSD in the mouth ROI is significantly higher in the active-speech
+   window than in the silence window. This is the **release gate**
+   that proves the audio bridge drives the mouth in time with audio,
+   not the static `0x111111`/`0x330000` dummy. A green run validates
+   the end-to-end adapter contract on the target production stack.
+
+When 1 + 2 + 4 pass on the production stack, the technical
+pre-conditions for `commercial_use: true` are met. The flag does NOT
+flip automatically because SadTalker's audio2motion weights are
+non-commercial; to release commercially you must either:
+
+* (preferred) replace SadTalker Audio2Motion with a
+  commercially-licensed model (e.g. WHSP → ARKit-blendshape, or a
+  Studio-grade in-house model), or
+* accept that the audio bridge ships non-commercial weights and
+  document the limitation in customer contracts.
+
+Until those items close, **live mode of `liveportrait-human-v1` is for
+research and pilot users only**.
+
 See `providers/liveportrait/inference_config.py` for the schema
 version (`LIVE_PORTRAIT_PACK_VERSION`); bumps must come with a
 migration path in `_load_source_bundle`.
+
+## SadTalker Audio2Motion integration
+
+Production-grade lip-sync is now wired through
+`providers/liveportrait/audio_bridge/sadtalker.py`. The bridge
+follows a deliberately constrained policy:
+
+* `HEYAVATAR_AUDIO_BRIDGE_BACKEND=neural` requires SadTalker's
+  `audio2motion.models.Audio2MotionModel` to import on the GPU
+  worker. If the import fails the bridge raises `RuntimeError` and
+  the engine transitions to `EngineState.DEGRADED` so the
+  orchestrator routes around the broken worker.
+* The neon^functional policy is "never silent fallback" — a worker
+  with broken CUDA extensions cannot ship DSP-tier mouth motion to
+  paying customers. The dsp backend stays the default for CI
+  (`HEYAVATAR_AUDIO_BRIDGE_BACKEND=dsp`) so mock-mode tests stay
+  green.

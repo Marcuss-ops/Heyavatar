@@ -1,7 +1,8 @@
 """Storage adapters."""
 
 from .avatar_packs import AvatarPackRepository
-from .jobs import InMemoryJobRepository, RedisJobRepository
+from .jobs.memory import InMemoryJobRepository
+from .jobs.redis import RedisJobRepository
 from .object_store import FsObjectStore, ObjectStore, build_object_store
 
 __all__ = [

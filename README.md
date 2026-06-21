@@ -61,6 +61,118 @@ and write an in-memory avatar pack to `HEYAVATAR_PACK_DIR`.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown.
 
+## 🗺️ Where to find it
+
+Following the *one concern, one module* rule, every package is split
+into thematic subdirs. Jump straight to the row that names the
+behaviour you're hunting. **Imports always go through the most-specific
+submodule** — e.g. `from workers.encoding_worker.worker import
+EncodingWorker`, not `from workers.encoding_worker import …`.
+
+### Production orchestration
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| `RenderVideo` orchestrator + chunking            | `src/application/render_video/use_case.py`               |
+| `ChunkConfig` (size + retries + max-chunks cap)  | `src/application/render_video/config.py`                 |
+| Audio duration probe (`ffprobe` wrapper)         | `src/application/render_video/audio_probe.py`            |
+| Chunk-list manifest writer                       | `src/application/render_video/manifest.py`               |
+
+### Workers
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| GPU worker class + reservation loop              | `workers/gpu_worker/worker.py`                           |
+| Worker per-job processing (`_do_process`)        | `workers/gpu_worker/process.py`                          |
+| Worker Prometheus + pack-archive reader          | `workers/gpu_worker/telemetry.py`                        |
+| Worker entry point (`main()`, `build_queue`)     | `workers/gpu_worker/cli.py`                              |
+| `EncodingWorker` (chunk-list assembler)          | `workers/encoding_worker/worker.py`                      |
+| Encoding manifest parser                         | `workers/encoding_worker/manifest.py`                    |
+| Codec picker (`h264_nvenc` vs `libx264`)         | `workers/encoding_worker/codec.py`                       |
+| Encoding CLI (`main()`)                          | `workers/encoding_worker/cli.py`                         |
+
+### Scheduler & queue
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| In-process queue                                 | `src/scheduler/queue/memory.py`                          |
+| Drop-everything queue (smoke + tests)           | `src/scheduler/queue/null.py`                            |
+| Redis Streams queue (production)                | `src/scheduler/queue/redis.py`                           |
+| `WorkerPool` + live worker records               | `src/scheduler/routing/worker_pool.py`                   |
+| `TierRouter` (registry-driven primary+fallback) | `src/scheduler/routing/router.py`                        |
+| Capacity-aware engine picker                     | `TierRouter.pick_available(tier, pool)`                  |
+
+### Storage
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| In-memory job repository                         | `src/storage/jobs/memory.py`                             |
+| Redis-backed job repository                      | `src/storage/jobs/redis.py`                              |
+| Avatar pack repository (`.tar` round-trip)       | `src/storage/avatar_packs.py`                            |
+| Object store (FS today, S3 tomorrow)             | `src/storage/object_store.py`                            |
+
+### API gateway
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| `create_app()` + module-level `app` ASGI instance | `api/app/factory.py` — also re-exported via `api/app/__init__.py` so Uvicorn's `api.app:app` convention still resolves |
+| `AppState` dataclass + `lifespan` async context | `api/app/state.py`                                       |
+| Queue-backend picker (`_build_queue`)            | `api/app/queue_factory.py`                               |
+| Prometheus `/metrics` mount + middleware         | `api/app/metrics.py`                                     |
+
+### Observability
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| OpenTelemetry tracer + OTLP provider lifecycle   | `src/observability/distributed/tracing.py`               |
+| W3C `traceparent` inject + extract across the queue boundary | `src/observability/distributed/propagation.py` |
+| Prometheus metric constants + label cardinality | `src/observability/metrics/constants.py`                |
+| Prometheus instruments (counters/gauges/histograms) | `src/observability/metrics/instruments.py`            |
+| Recording helpers + helpers for terminal/job state | `src/observability/metrics/recorders.py`               |
+| `/metrics` text exposition                       | `src/observability/metrics/exposition.py`               |
+
+### LivePortrait engine
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| `LivePortraitAdapter` dataclass + facade         | `providers/liveportrait/adapter/engine.py`               |
+| Real-mode method implementations                  | `providers/liveportrait/adapter/{_upstream, _identity, _render}.py` (attached to the class at module load) |
+| Mock fallback (used under `HEYAVATAR_MOCK_ENGINE=1`) | `providers/liveportrait/adapter/_mock.py`            |
+| Checkpoint manifest + SHA256 pinning             | `providers/liveportrait/checkpoint_manager/manifest.py`  |
+| Checkpoint CLI / verifier                        | `providers/liveportrait/checkpoint_manager/manager.py`   |
+| HuggingFace + urllib download with smart cache   | `providers/liveportrait/checkpoint_manager/downloader.py` |
+| Audio → driving envelopes (21-keypoint tensors)  | `providers/liveportrait/audio_bridge/{bridge, types, dsp}.py` |
+| Typed mirrors of upstream `InferenceConfig`/`CropConfig` | `providers/liveportrait/inference_config.py` (kept flat; 3 dataclasses, low file size) |
+
+### MuseTalk engine
+
+| Concern                                          | File                                                     |
+|--------------------------------------------------|----------------------------------------------------------|
+| `MuseTalkAdapter` dataclass + facade             | `providers/musetalk/adapter/engine.py`                   |
+| Real-mode method implementations                  | `providers/musetalk/adapter/{_upstream, _identity, _render}.py` (attached at module load) |
+| Mock fallback                                    | `providers/musetalk/adapter/_mock.py`                    |
+| Per-adapter checkpoint manager                   | `providers/musetalk/adapter/checkpoints.py`              |
+
+### Navigation rules of thumb
+
+- **Cross-sibling coupling is rare.** Most refactored subdirs share
+  no imports between siblings and compose only through their parent's
+  composition root (or by attaching free functions to the dataclass at
+  module load — the adapter pattern in `providers/{liveportrait,
+  musetalk}/adapter/`). The exception today is
+  `src/scheduler/routing/`, where `router.py` reaches its sibling
+  via `from .worker_pool import WorkerPool`.
+- **Cross-package** imports are absolute — e.g.
+  `from src.scheduler.routing.router import TierRouter` from a route
+  handler.
+- **No compat layer (almost everywhere).** Old paths are gone; if
+  something imports `from src.application.render_video import
+  RenderVideo`, that import is stale and will fail — use `from
+  src.application.render_video.use_case import RenderVideo` instead.
+  The one deliberate exception is `api/app/__init__.py`, which
+  re-exports `app` and `create_app` from `factory.py` so Uvicorn's
+  documented `api.app:app` launch convention keeps resolving.
+
 ## 🎚️ Three quality tiers
 
 | Tier     | Primary engine       | Use case                                  | VRAM  | Cost/GPU-s |

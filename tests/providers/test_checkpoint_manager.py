@@ -12,10 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from providers.liveportrait.checkpoint_manager import (
-    CHECKPOINT_MANIFEST,
-    CheckpointManager,
-)
+from providers.liveportrait.checkpoint_manager.manager import CheckpointManager
+from providers.liveportrait.checkpoint_manager.manifest import CHECKPOINT_MANIFEST
 
 
 def test_mock_mode_manifest_is_exposed() -> None:

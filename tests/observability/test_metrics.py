@@ -29,7 +29,7 @@ def test_gpu_seconds_counter_is_registered(private_registry) -> None:
 
 def test_record_gpu_seconds_increments_labeled_counter(private_registry) -> None:
     """Exercises the helper functions against the private registry."""
-    from src.observability.metrics import (
+    from src.observability.metrics.recorders import (
         record_gpu_seconds,
         record_output_minutes,
     )
@@ -45,7 +45,7 @@ def test_record_gpu_seconds_increments_labeled_counter(private_registry) -> None
 
 def test_zero_or_negative_increments_are_ignored(private_registry) -> None:
     """Counter helpers refuse non-positive deltas so the ratio stays sane."""
-    from src.observability.metrics import record_gpu_seconds, record_output_minutes
+    from src.observability.metrics.recorders import record_gpu_seconds, record_output_minutes
     record_gpu_seconds("musetalk-v1", "express", 0.0)
     record_gpu_seconds("musetalk-v1", "express", -3.0)
     record_output_minutes("musetalk-v1", "express", -0.5)
@@ -58,7 +58,7 @@ def test_zero_or_negative_increments_are_ignored(private_registry) -> None:
 
 def test_observe_request_emits_latency_observation(private_registry) -> None:
     import time
-    from src.observability.metrics import observe_request
+    from src.observability.metrics.recorders import observe_request
     started = time.monotonic() - 0.1
     observe_request(method="POST", route="/jobs", status_code=202, started_monotonic=started)
     from prometheus_client import generate_latest
@@ -69,7 +69,7 @@ def test_observe_request_emits_latency_observation(private_registry) -> None:
 
 
 def test_collect_latest_returns_text_plain(private_registry) -> None:
-    from src.observability.metrics import collect_latest
+    from src.observability.metrics.exposition import collect_latest
     body, content_type = collect_latest(private_registry)
     assert content_type.startswith("text/plain")
     assert b"heyavatar_" in body

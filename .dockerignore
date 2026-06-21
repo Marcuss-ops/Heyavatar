@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDEs / OS
+.git/
+.github/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+scratch/
+captures/
+avatar_packs/
+object_store/
+heyavatar.egg-info/
+
+# Heavy local-only mounts that should never be baked into images
+LivePortrait/
+MuseTalk/
+checkpoints/
+
+# Test data (created on first run)
+*.tmp
+*.log
+
+# Housekeeping
+.stamp
+CHANGELOG.md
+TODO.md
+LICENSE
+docs/
+ops/prometheus/
+ops/grafana/
+
+# Docker artefacts (no recursion)
+Dockerfile
+docker-compose.yml
+.dockerignore

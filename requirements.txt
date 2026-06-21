@@ -11,10 +11,28 @@ loguru>=0.7
 httpx>=0.27
 tenacity>=8.2
 
+# Audio-to-expression bridge. The dsp backend (default for CI) needs
+# only numpy + stdlib. The neural backend (``HEYAVATAR_AUDIO_BRIDGE_BACKEND=neural``)
+# needs SadTalker + torch, installed on the gpu-worker image via:
+#
+#   pip install -e ".[audio-bridge-neural]"
+#
+# SadTalker itself is Apache-2.0 code; the bundled audio2motion
+# checkpoint weights are trained on the LRW + VoxCeleb datasets, both
+# non-commercial research corpora. The audio-bridge-neural extra is
+# therefore non-commercial-USE; the ``liveportrait-human-v1.commercial_use``
+# flag in ``registry/models.yaml`` stays ``false`` accordingly (see
+# ``docs/MODEL_LICENSES.md``).
+#
+# The extra intentionally does NOT auto-install on `pip install -e .`
+# so mock-mode CI / dev workstations stay lean.
+
 # Optional
 # redis>=5.0                       # pip install -e ".[redis]"
 # aioboto3>=12.0                   # pip install -e ".[s3]"
 # torch>=2.0                       # pip install -e ".[gpu]"
+# sadtalker @ git+https://github.com/OpenTalker/SadTalker@v0.0.x  # pip install -e ".[audio-bridge-neural]"
+# librosa>=0.10                    # pip install -e ".[audio-bridge-neural]"  (SadTalker transitive)
 
 # Dev / test
 # pytest>=7.4

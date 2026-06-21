@@ -45,12 +45,12 @@ def compile_avatar(payload: AvatarCompileRequest, request: Request) -> AvatarCom
         "language_hint": payload.language_hint or "",
     }
     try:
-        from src.observability.context import inject_traceparent
+        from src.observability.distributed.propagation import inject_traceparent
         queue_payload = inject_traceparent(queue_payload)
     except ImportError:
         pass
     try:
-        from src.observability.tracing import get_tracer
+        from src.observability.distributed.tracing import get_tracer
         tracer = get_tracer("api.avatars")
         with tracer.start_as_current_span("api.compile_avatar", attributes={
             "heyavatar.job_id": str(job_id),

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from src.domain.enums import Tier
-from src.scheduler.router import TierRouter
+from src.scheduler.routing.router import TierRouter
 
 
 def test_router_reads_registry_yaml():

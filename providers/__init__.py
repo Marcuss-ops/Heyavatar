@@ -12,8 +12,8 @@ from contracts.avatar_engine import AvatarEngine
 from src.domain.enums import EngineId
 
 from providers.echomimic.adapter import EchoMimicAdapter
-from providers.liveportrait.adapter import LivePortraitAdapter
-from providers.musetalk.adapter import MuseTalkAdapter
+from providers.liveportrait.adapter.engine import LivePortraitAdapter
+from providers.musetalk.adapter.engine import MuseTalkAdapter
 
 PROVIDERS: Dict[EngineId, Type[AvatarEngine]] = {
     EngineId.LIVE_PORTRAIT: LivePortraitAdapter,

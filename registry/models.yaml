@@ -23,20 +23,42 @@ models:
     provider: liveportrait
     code_license: MIT
     weights_license: MIT
-    commercial_use: false
+    commercial_use: false   # GATED — see note below
     dependencies:
       face_detector:
         provider: mediapipe
         license: Apache-2.0
       landmark_model:
-        provider: insightface
-        license: NonCommercial-ResearchOnly
-        replace_with: mediapipe-face-landmarker
+        provider: mediapipe-face-landmarker
+        license: Apache-2.0
+      audio_bridge:
+        provider: sadtalker
+        code_license: Apache-2.0
+        weights_license: NON-COMMERCIAL    # trained on LRW + VoxCeleb
+      audio_bridge_backend_default: dsp    # CI default; operator flips to `neural` on GPU worker
     checkpoint_url: https://github.com/KlingAIResearch/LivePortrait/releases
     checkpoint_sha256: TBD
     notes: >-
-      InsightFace-based landmark detector is non-commercial. Replace with
-      MediaPipe Face Landmarker before commercial deployment.
+      InsightFace replaced by MediaPipe Face Landmarker (identity
+      preparation now uses mp.solutions.face_mesh + OpenCV Haar
+      fallback). The audio-to-expression bridge is now SadTalker
+      Audio2Motion (3DMM 50+3 → LivePortrait 21×3 via the static
+      projector in `providers/liveportrait/audio_bridge/projection.py`)
+      under HEYAVATAR_AUDIO_BRIDGE_BACKEND=neural, with the legacy
+      DSP envelope pathway retained for CI mock-mode via
+      HEYAVATAR_AUDIO_BRIDGE_BACKEND=dsp. The `commercial_use` flag
+      IS still `false` because BOTH:
+      (a) SadTalker's audio2motion checkpoint weights are trained on
+          LRW + VoxCeleb (both non-commercial research corpora), AND
+      (b) the release gates
+          `tests/smoke/test_real_gpu/test_mediapipe_identity.py`
+          AND `tests/smoke/test_real_gpu/test_pipeline.py` (SSD-based
+          mouth-sync assertion) both need to pass on the production
+          GPU box before flipping — only the latter is runnable when
+          SadTalker is wired through.
+      DO NOT flip to `true` until both gates pass AND the audio
+      bridge ships with commercially-licensed weights (i.e. if the
+      production audio bridge is not SadTalker).
 
   - model_id: musetalk-v1
     provider: musetalk

@@ -23,7 +23,7 @@ from src.domain.types import (
     RenderChunkRequest,
     RenderChunkResult,
 )
-from providers.liveportrait.adapter import LivePortraitAdapter
+from providers.liveportrait.adapter.engine import LivePortraitAdapter
 from providers._ffmpeg import _seed_from_path, _write_dummy_mp4
 
 

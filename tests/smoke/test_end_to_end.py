@@ -9,7 +9,8 @@ import pytest
 
 from providers import get_provider
 from src.application.compile_avatar import AvatarCompiler
-from src.application.render_video import ChunkConfig, RenderVideo
+from src.application.render_video.config import ChunkConfig
+from src.application.render_video.use_case import RenderVideo
 from src.application.telemetry import TelemetryRecorder
 from src.core.config import get_settings
 from src.domain.enums import EngineId
@@ -56,7 +57,7 @@ def test_end_to_end_compile_and_one_chunk(workdir, tmp_path):
         assert result.output_path.suffix == ".txt"
 
         # ── encoding pass ──────────────────────────────────────
-        from workers.encoding_worker import EncodingWorker
+        from workers.encoding_worker.worker import EncodingWorker
         encoder = EncodingWorker(settings=get_settings())
         final = encoder.encode("job-smoke", result.output_path, audio_path=audio)
         assert final.is_file()

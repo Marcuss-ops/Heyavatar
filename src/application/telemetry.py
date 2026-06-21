@@ -70,7 +70,7 @@ class TelemetryRecorder:
             self.output_minutes_total += float(output_minutes)
             self.per_engine_output_minutes[engine_id] += float(output_minutes)
         try:
-            from src.observability.metrics import (
+            from src.observability.metrics.recorders import (
                 record_gpu_seconds,
                 record_output_minutes,
             )

@@ -57,6 +57,32 @@ class Settings:
     s3_endpoint_url: Optional[str] = None
     s3_bucket: Optional[str] = None
 
+    # Audio-to-expression bridge backend:
+    #   ``dsp``    — keep the pure-Python DSP envelope pipeline (no
+    #                ML deps; default for CI to keep mock tests green).
+    #   ``neural`` — require SadTalker Audio2Motion to be importable
+    #                and run on GPU. If the import fails the engine
+    #                transitions to DEGRADED so the orchestrator can
+    #                route around the broken worker instead of
+    #                silently shipping DSP-tier lip-sync to paying
+    #                customers. Never auto-falls-back from ``neural``
+    #                to ``dsp``; that policy is intentional.
+    audio_bridge_backend: Literal["dsp", "neural"] = "dsp"
+
+    # Distributed heartbeat — workers publish their health JSON to
+    # ``heyavatar:worker:{worker_id}:health`` every
+    # ``worker_health_publish_seconds`` seconds, with the Redis key
+    # expiring after ``worker_pool_heartbeat_ttl`` seconds. The API
+    # process polls the same key-space every
+    # ``api_worker_pool_sync_seconds`` seconds so the in-process
+    # WorkerPool mirrors the cluster's live capacity. All three
+    # values are operator-tunable; the default TTL is 2x the publish
+    # period so a transient publish miss does not yet expire the
+    # record.
+    worker_health_publish_seconds: float = 3.0
+    api_worker_pool_sync_seconds: float = 3.0
+    worker_pool_heartbeat_ttl: int = 15
+
     # Observability
     # OTLP exporter endpoint (gRPC), e.g. ``http://otel-collector:4317``.
     # Empty / starting with "off" disables tracing entirely so the
@@ -92,6 +118,18 @@ class Settings:
             object_store_backend=os.environ.get("HEYAVATAR_OBJECT_STORE_BACKEND", "fs"),
             s3_endpoint_url=os.environ.get("HEYAVATAR_S3_ENDPOINT"),
             s3_bucket=os.environ.get("HEYAVATAR_S3_BUCKET"),
+            audio_bridge_backend=os.environ.get(  # type: ignore[arg-type]
+                "HEYAVATAR_AUDIO_BRIDGE_BACKEND", "dsp"
+            ),
+            worker_health_publish_seconds=_env_float(
+                "HEYAVATAR_WORKER_HEALTH_PUBLISH_SECONDS", 3.0
+            ),
+            api_worker_pool_sync_seconds=_env_float(
+                "HEYAVATAR_API_WORKER_POOL_SYNC_SECONDS", 3.0
+            ),
+            worker_pool_heartbeat_ttl=_env_int(
+                "HEYAVATAR_WORKER_POOL_HEARTBEAT_TTL", 15
+            ),
             otel_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
             process_role=os.environ.get("HEYAVATAR_PROCESS_ROLE", "api"),
             worker_metrics_port=_env_int("HEYAVATAR_WORKER_METRICS_PORT", 9100),

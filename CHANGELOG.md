@@ -1,0 +1,256 @@
+# Changelog
+
+All notable changes to Heyavatar are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).## [Unreleased]
+
+### Added
+
+- Multi-stage `Dockerfile` for `api` and `gpu-worker` services. The
+  `MultiScaleDeformableAttention` CUDA op is built in a dedicated layer
+  so business-logic edits don't invalidate the 5–10 min compile cache.
+- `docker-compose.yml` wiring api + gpu-worker + encoder + redis with
+  healthcheck-driven dependency ordering.
+- `.dockerignore` for reproducible build contexts.
+- `ops/docker_entrypoint.sh` dispatched by `SERVICE_ROLE` (api|gpu-worker|encoder).
+- `ops/healthcheck.py` Http probe (no `requests` dependency).
+- `WorkerPool.unregister()`, `WorkerPool.mark_in_flight()`, and
+  `WorkerPool.sync_from_redis()` to support in-process tests and a
+  future distributed heartbeat production path.
+- `GpuWorker.pool` optional parameter: registers on `run()`, calls
+  `mark_in_flight()` per job, calls `heartbeat(health=engine.health())`
+  on each completion, and `unregister()` on shutdown.
+- `providers/musetalk/adapter/checkpoints.py::verify()` — explicit
+  policy for SHA pins (mock vs `HEYAVATAR_SKIP_SHA256_VERIFY=1` vs
+  production-strict). Mirrors the LivePortrait manager.
+- `tests/providers/test_import_shadowing.py` — regression for the
+  dynamic-package import helper that dodges our own `src/` shadowing
+  of the upstream LivePortrait tree.
+- `tests/providers/test_musetalk_real_mode.py` — verifies the
+  MuseTalk upstream-detection contract and the verify-policy branches.
+- `tests/providers/test_worker_pool_in_process.py` — capacity tracking
+  for in-process worker tests, including `pick_available` fallback walk.
+
+### Changed
+
+- `providers/musetalk/adapter/checkpoints.py` documents the TBD-SHA
+  strategy explicitly and exposes `verify()` so audits don't require
+  a network round-trip.
+
+### Added — SadTalker Audio2Motion audio bridge (Task 2, gated)
+
+- **`providers/liveportrait/audio_bridge/sadtalker.py`** (new) —
+  wraps the upstream SadTalker `Audio2MotionModel`. Lazy-imports so
+  CI without CUDA does NOT pay the import cost. **Never silently
+  falls back to DSP** when `HEYAVATAR_AUDIO_BRIDGE_BACKEND=neural` is
+  selected — a `RuntimeError` is raised so the engine transitions to
+  `EngineState.DEGRADED` and the orchestrator routes around broken
+  workers.
+- **`providers/liveportrait/audio_bridge/projection.py`** (new) —
+  static 3DMM(50) → LivePortrait(21, 3) linear projection
+  (identity placeholder; the calibrated W ships via a future
+  GPU-worker calibration command).
+- **`providers/liveportrait/audio_bridge/types.py`** — refreshed to
+  add `SadTalkerCoefs` typed intermediate plus the new
+  `DrivingSignals.backend` provenance field. Drops the now-internal
+  `ChunkEnvelope` from the public boundary.
+- **`providers/liveportrait/audio_bridge/bridge.py`** — refactored
+  the public API from two functions (`envelopes_from_audio` +
+  `envelopes_to_driving`) to a single `audio_to_driving(...)` that
+  dispatches to backend based on
+  `Settings.audio_bridge_backend` (`dsp` default; `neural` selects
+  SadTalker). The legacy DSP path is preserved as
+  `_audio_to_driving_dsp(...)` so the existing contract tests
+  pass unchanged.
+- **`src/core/config.py`** — new setting
+  `audio_bridge_backend: Literal["dsp", "neural"] = "dsp"`, wired
+  from env var `HEYAVATAR_AUDIO_BRIDGE_BACKEND`.
+- **`providers/liveportrait/adapter/_render.py`** — replaces the two
+  envelopes calls with a single `audio_to_driving(...)` call. The
+  downstream `driving.frames` / `exp_d_flat` / `mouth_aperture`
+  contracts are unchanged so the rendering batched warp_decode
+  loop is untouched.
+- **`tests/providers/test_sadtalker_projection.py`** (new) — three
+  unit tests for the projection layer (`project_3dmm_to_keypoint_delta`,
+  `mouth_aperture_from_jaw`, composite
+  `sadtalker_coefs_to_driving_flat`).
+- **`tests/providers/test_audio_bridge.py`** — refactored to the new
+  single-API surface. Adds 3 backend-selection tests: default-falls-to-dsp,
+  explicit-dsp, neural-raises-without-SadTalker, plus a stubbed-SadTalker
+  happy path that produces the canonical `(T, 21, 3)` driving tensor.
+- **`tests/smoke/test_real_gpu/_helpers.py:: _test_audio`** — now
+  writes a 1.0s WAV composed of 0.5s silence + 0.5s active 1 kHz
+  tone so the SSD-based mouth-sync assertion can partition frames
+  into silence and active regions.
+- **`tests/smoke/test_real_gpu/test_pipeline.py`** — adds the
+  **release gate**: decodes the produced mp4 with ffmpeg, splits
+  frames 50/50 into silence and active windows, computes per-frame
+  SSD in the mouth ROI (lower 1/3 of the frame), and asserts
+  `SSD_speech > 50.0 > SSD_silence`. The threshold rejects both
+  the `0x111111` mock fallback AND the `0x330000` degraded fallback —
+  a green run proves mouth-sync on the production GPU box.
+- **`docs/MODEL_LICENSES.md`** — closes step 2 of the Production-Safe
+  Path; documents SadTalker integration + non-commercial weights
+  policy.
+- **`requirements.txt`** — adds the (commented-out) `[audio-bridge-neural]`
+  extra with SadTalker + librosa pinned for the GPU worker image.
+- **`registry/models.yaml::liveportrait-human-v1.dependencies`** —
+  adds `audio_bridge: sadtalker` entry with non-commercial weights
+  license annotation; flag stays `false` accordingly.
+
+### Added — MediaPipe Face Landmarker migration (Task 3, gated)
+
+- **`providers/liveportrait/adapter/_mediapipe.py`** — thin wrapper
+  around `mp.solutions.face_mesh` (Apache-2.0). Returns the largest
+  face bbox `(x, y, w, h)` for an RGB numpy image; `None` if no
+  faces detected.
+- **`providers/liveportrait/adapter/_identity.py`** — face detection
+  cascade now goes MediaPipe first, OpenCV Haar second, center crop
+  last. The chosen detector is recorded in the avatar pack's
+  `identity_meta.json` (`detector` field) so the orchestrator can
+  audit provenance.
+- **`tests/providers/test_mediapipe_detector.py`** — unit tests for
+  the helper module + integration tests confirming `_identity.py`
+  prefers MediaPipe when importable.
+- **`tests/smoke/test_real_gpu/test_mediapipe_identity.py`** —
+  real-GPU smoke that asserts `identity_meta.json: detector ==
+  "mediapipe_face_mesh"`. This is the release gate for flipping
+  `liveportrait-human-v1.commercial_use: true`.
+
+### IMPORTANT — `commercial_use` gate NOT flipped yet
+
+`registry/models.yaml::liveportrait-human-v1.commercial_use` remains
+`false` until:
+
+1. `tests/smoke/test_real_gpu/test_mediapipe_identity.py` passes on a
+   real-GPU workstation with `mediapipe` installed.
+2. `tests/contracts/test_avatar_engine_contract.py` runs cleanly in
+   real (non-mock) mode.
+3. The audio-bridge neural replacement is shipped (separate track). ✅
+   done in this release (see below).
+4. `tests/smoke/test_real_gpu/test_pipeline.py` (SSD-based mouth-sync
+   assertion) passes on the production GPU box.
+
+This release is the **code change** that closes steps (1) and (3),
+and adds the gate for step (4). The flip happens once step (4) plus
+a commercially-licensed audio bridge are in place.
+
+### Follow-ups (deferred, recorded for the next wave)
+
+- Distributed worker heartbeat via Redis (`WorkerPool.sync_from_redis`
+  is wired, but no worker still publishes). Production will add the
+  worker-side `SET heyavatar:worker:{id}:health` writer.
+- Real MediaPipe swap to flip `liveportrait-human-v1.commercial_use`
+  to true (see updated `docs/MODEL_LICENSES.md`).
+- Real-mode `EchoMimicAdapter` (currently raises NotImplementedError
+  on the real path).
+- Tests for `tests/smoke/test_real_gpu/` remain skipped on this dev
+  host (no CUDA + no LivePortrait upstream cloned); see the test
+  package's `__init__.py` for the harness.
+
+## [Unreleased]### Changed
+
+- **Subdir refactor wave** — flat source files >250 lines were split
+  into thematic subdirs across **10 production packages** (plus **2
+  new sibling subdirs**) and **4 test packages** to isolate concerns
+  and improve navigability. No compatibility layer: old file paths are
+  removed. Imports always go through the most-specific submodule,
+  e.g. `from workers.encoding_worker.worker import EncodingWorker`.
+
+  Production packages now organised as:
+
+  | Old flat file(s)                                | New subdir layout                                                                                        |
+  |------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+  | `src/application/render_video.py`              | `src/application/render_video/{__init__, config, audio_probe, manifest, use_case}.py`                  |
+  | `workers/gpu_worker.py`                         | `workers/gpu_worker/{__init__, worker, process, telemetry, cli}.py`                                     |
+  | `src/scheduler/queue.py` (was a single file)    | `src/scheduler/queue/{__init__, memory, null, redis}.py`                                                |
+  | `src/observability/metrics.py` (was single)     | `src/observability/metrics/{__init__, constants, instruments, recorders, exposition}.py`               |
+  | `providers/liveportrait/audio_bridge.py`       | `providers/liveportrait/audio_bridge/{__init__, bridge, types, dsp}.py`                                 |
+  | `providers/liveportrait/checkpoint_manager.py` | `providers/liveportrait/checkpoint_manager/{__init__, manifest, manager, downloader}.py`                |
+  | `providers/liveportrait/adapter.py`            | `providers/liveportrait/adapter/{__init__, _mock, _upstream, _identity, _render, engine}.py`           |
+  | `providers/musetalk/adapter.py`                | `providers/musetalk/adapter/{__init__, checkpoints, _upstream, _mock, _identity, _render, engine}.py`  |
+  | `workers/encoding_worker.py`                    | `workers/encoding_worker/{__init__, worker, manifest, codec, cli}.py`                                   |
+  | `src/storage/jobs.py`                           | `src/storage/jobs/{__init__, memory, redis}.py`                                                         |
+  | `api/app.py`                                    | `api/app/{__init__, state, queue_factory, metrics, factory}.py` — the `api.app:app` Uvicorn convention is preserved via a small `__init__.py` re-export of `app`/`create_app` |
+  | `src/scheduler/{router, worker_pool}.py` (new) | `src/scheduler/routing/{__init__, router, worker_pool}.py`                                              |
+  | `src/observability/{context, tracing}.py`      | `src/observability/distributed/{__init__, tracing, propagation}.py`                                     |
+
+  Test packages now organised as:
+
+  | Old flat test file                              | New scenario-split package                                                                              |
+  |------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+  | `tests/smoke/test_full_pipeline.py`            | `tests/smoke/test_full_pipeline/{__init__, _helpers, test_happy_path, test_compile_only, test_failure_recording}.py` |
+  | `tests/application/test_render_video.py`       | `tests/application/test_render_video/{__init__, _helpers, test_retry_succeeds, test_retry_exhausted, test_mixed_chunks, test_retry_attempts, test_degraded_output, test_retry_budget}.py` |
+  | `tests/workers/test_gpu_worker.py`              | `tests/workers/test_gpu_worker/{__init__, _helpers, test_compile_job, test_completed, test_completed_degraded, test_failed_inference, test_failed_encoding}.py` |
+  | `tests/smoke/test_real_gpu.py`                  | `tests/smoke/test_real_gpu/{__init__, _helpers, test_gpu_health, test_checkpoints, test_engine_load, test_pipeline}.py` |
+
+### Added — Distributed worker heartbeat (Redis)
+
+- **`workers/gpu_worker/telemetry.py:: _build_health_payload`** —
+  serialise a worker snapshot into the JSON contract that
+  `WorkerPool.sync_from_redis()` consumes.
+- **`workers/gpu_worker/telemetry.py:: _publish_health`** — atomic
+  `SET heyavatar:worker:{worker_id}:health <JSON> EX N` on a stub
+  redis client; swallows transient Redis errors so a blip never
+  crashes a render worker.
+- **`workers/gpu_worker/worker.py::GpuWorker._start_redis_heartbeat`**
+  — daemon thread that publishes the worker's `engine.health()`
+  every `settings.worker_health_publish_seconds` (default 3.0).
+  Started in `run()` after `_load_engine()`; cooperatively stopped
+  in the worker-shutdown `finally` via `_stop_redis_heartbeat()`.
+- **`workers/gpu_worker/worker.py:: GpuWorker.publish_heartbeat_once`**
+  — single-shot test/debug entry point that bypasses the thread.
+- **`workers/gpu_worker/cli.py`** — passes the shared `redis.Redis`
+  client to `GpuWorker` so the heartbeat thread reuses the same
+  connection as `RedisJobRepository`.
+- **`api/app/state.py`** — `AppState` now carries `worker_pool: WorkerPool`
+  + `redis_client: object | None`. `lifespan` starts the
+  `_start_worker_pool_sync_gatherer` thread that calls
+  `WorkerPool.sync_from_redis(client)` every
+  `settings.api_worker_pool_sync_seconds` (default 3.0s). On
+  shutdown the thread is joined with a 2-second cap.
+- **`api/app/state.py:: _build_redis_client`** — lazy redis client
+  factory used by the lifespan; degrades silently to `None` when
+  `redis` is not installed or `REDIS_URL` is unset.
+- **`src/core/config.py`** — three new settings + env vars:
+  `worker_health_publish_seconds` (3.0),
+  `api_worker_pool_sync_seconds` (3.0),
+  `worker_pool_heartbeat_ttl` (15).
+- **`tests/workers/test_gpu_worker/test_redis_heartbeat.py`** (new) —
+  schema + wire-format + single-shot engine dispatch tests using
+  an in-memory stub redis.
+- **`tests/scheduler/test_cross_process_capacity.py`** (new) — stub
+  redis → `WorkerPool.sync_from_redis` → `TierRouter.pick_available`
+  cross-process happy path + three schema-drift drop tests.
+- **`tests/providers/test_worker_pool_in_process.py`** — added a
+  skip-on-unparseable-JSON test asserting the pool records are
+  empty when a record's body cannot be decoded.
+
+The resulting capability: GPU workers on one machine publish
+heartbeats to `heyavatar:worker:{id}:health` and the API process on
+another machine sees them in its `WorkerPool` within
+`api_worker_pool_sync_seconds`, so
+`TierRouter.pick_available(tier, pool)` returns the correct engine
+across process boundaries.
+
+### Fixed
+
+- `src/application/render_video/use_case.py::_chunks_for` now reads the
+  audio duration through the module attribute
+  (`audio_probe._probe_audio_duration(...)`) instead of a function
+  reference captured at import time. This lets pytest
+  `MonkeyPatch.setattr("src.application.render_video.audio_probe._probe_audio_duration", ...)`
+  intercept the call — previously the captured binding silently NO-OP'd
+  every test patch and tests fell through to the 0.0-seconds fallback
+  that produced 16 chunks of `0x330000` degraded mp4.
+- `tests/smoke/test_real_gpu/_helpers.py::requires_cuda` now also
+  skips when the LivePortrait upstream repo isn't cloned
+  (`<project_root>/LivePortrait/src/live_portrait_pipeline.py`
+  sentinel missing). Without this, CI nodes with CUDA but no
+  upstream would fail with `Engine state should be IDLE or LOADING
+  after load(), got degraded` instead of skipping cleanly.
+- Loggers in `src/observability/distributed/tracing.py` and any
+  other refactored module now use `get_logger(__name__)` rather than
+  hardcoded dotted-path strings, so log routing/shipment by logger
+  name stays correct under the new module locations.

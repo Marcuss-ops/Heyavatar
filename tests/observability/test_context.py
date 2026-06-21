@@ -10,7 +10,7 @@ import importlib.util
 
 import pytest
 
-from src.observability.context import (
+from src.observability.distributed.propagation import (
     OTEL_PAYLOAD_KEY,
     _decode,
     _encode,

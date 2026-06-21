@@ -5,8 +5,9 @@ business orchestration out of the routes and out of the workers so each
 side stays independent and testable.
 """
 
-from .compile_avatar import AvatarCompiler
-from .render_video import ChunkConfig, RenderVideo
-from .telemetry import TelemetryRecorder
+from src.application.compile_avatar import AvatarCompiler
+from src.application.render_video.config import ChunkConfig
+from src.application.render_video.use_case import RenderVideo
+from src.application.telemetry import TelemetryRecorder
 
 __all__ = ["AvatarCompiler", "ChunkConfig", "RenderVideo", "TelemetryRecorder"]
