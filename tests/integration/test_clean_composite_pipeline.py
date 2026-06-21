@@ -37,7 +37,7 @@ import pytest
 
 from contracts.compositor import CompositeRequest
 from contracts.quality_checker import QCRequest
-from providers.compositing.opencv_face.compositor import OpenCVFaceCompositor
+from src.pipeline import OpenCVFaceCompositor
 from src.quality.video_quality import VideoQualityChecker, debug_green_ratio
 
 requires_ffmpeg = pytest.mark.skipif(

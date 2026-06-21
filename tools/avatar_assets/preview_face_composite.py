@@ -40,7 +40,13 @@ def extract_src_landmarks(face_image_path: Path, task_path: Path):
         return face_img, result.face_landmarks[0], src_w, src_h
 
 def composite_preview(body_dir: Path, face_image_path: Path, output_path: Path):
-    """Composites a static face onto the precomputed body template using affine warp and masks."""
+    """Composites a static face onto the precomputed body template using affine warp and masks.
+
+    Deterministic preview only (single static image → body template).
+    For the production render path that composes a *generated face
+    video* onto the body template, see
+    ``src.pipeline.compositor.OpenCVFaceCompositor``.
+    """
     task_path = setup_mediapipe_model()
     
     # 1. Load source face details

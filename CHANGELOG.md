@@ -386,3 +386,50 @@ Verification:
     -k "not test_api_metrics and not test_metrics and not test_real_gpu"
   → 166 passed, 7 deselected (was 159 before Change 3; +7 from
   rewritten router tests).
+
+### Changed — Repository slimming plan, Change 2 (move)
+
+Per `docs/REPOSITORY_SLIMMING_PLAN.md` §4 the production OpenCV face
+compositor is moved out of the speculative `providers/compositing/`
+subtree into the canonical `src/pipeline/` package so it sits
+beside the other application-layer primitives
+(`src/quality/`, `src/application/`). No behavioural change.
+
+- **New canonical home** `src/pipeline/compositor.py` exporting
+  `OpenCVFaceCompositor` and `match_mean_std`. The class body is
+  source-identical to the previous
+  `providers/compositing/opencv_face/compositor.py` (same imports,
+  same signature, same `__all__`); line endings may differ because
+  the file was re-saved on the new path. Pytest parity is the
+  meaningful invariant. The module docstring points back to the old
+  path for migration.
+- **New package** `src/pipeline/__init__.py` re-exports
+  `OpenCVFaceCompositor` so callers now write
+  `from src.pipeline import OpenCVFaceCompositor`.
+- **Removed** the now-empty `providers/compositing/` subtree:
+  - `providers/compositing/opencv_face/__init__.py`
+  - `providers/compositing/opencv_face/compositor.py`
+  - `providers/compositing/__init__.py` (was only there to expose
+    the deleted subpackages)
+- **Removed** `tests/compositing/test_alpha_blend.py` — a pure math
+  test of the alpha-blend formula that never imported the
+  compositor class and was redundant with the in-class formula test
+  in `tests/compositing/test_debug_disabled.py`.
+- **Updated importers** to read from the canonical path:
+  - `tools/avatar_assets/render_clean_composite.py`
+    (`--body/--face/--face-mask/--neck-mask/--transforms/--audio/--output`
+    CLI; production-style render path)
+  - `tests/compositing/test_debug_disabled.py`
+  - `tests/integration/test_clean_composite_pipeline.py`
+- **`tools/avatar_assets/preview_face_composite.py` not touched.** It
+  composes a *single static face image* onto the body template via
+  its own inline `cv2.warpAffine` + Gaussian-blurred mask flow
+  (a deterministic preview, not part of the production render path).
+  Because it never imported `OpenCVFaceCompositor`, no import-path
+  update was required. The intra-file alpha formula is documented in
+  its `composite_preview()` docstring for future reference.
+
+Verification:
+  pytest tests/ --ignore=tests/observability \
+    -k "not test_api_metrics and not test_metrics and not test_real_gpu"
+  → 159 passed, 7 deselected.

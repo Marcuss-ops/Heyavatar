@@ -1,4 +1,13 @@
-"""OpenCVFaceCompositor — frame-by-frame face compositing with:
+"""OpenCVFaceCompositor — frame-by-frame face compositing.
+
+**Canonical location** (per Change 2 of
+``docs/REPOSITORY_SLIMMING_PLAN.md`` §4): ``src/pipeline/compositor.py``.
+The previous home at ``providers/compositing/opencv_face/compositor.py``
+has been deleted; both the runtime path and the offline preview tool
+import from here. Contract (``contracts.compositor.Compositor``) and
+class name are unchanged.
+
+Capabilities:
 
 * feathered alpha blend (face_mask + neck_mask)
 * per-channel color matching (mean-std normalisation)

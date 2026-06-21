@@ -26,7 +26,7 @@ from pathlib import Path
 
 from contracts.compositor import CompositeRequest
 from contracts.quality_checker import QCRequest
-from providers.compositing.opencv_face.compositor import OpenCVFaceCompositor
+from src.pipeline import OpenCVFaceCompositor
 from src.quality.exceptions import CompositeError, EncodingError, QualityError
 from src.quality.video_quality import VideoQualityChecker
 
