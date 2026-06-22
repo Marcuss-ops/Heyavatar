@@ -21,6 +21,8 @@ from typing import Optional
 
 from contracts.job_queue import JobState, RenderJob
 from src.application import AvatarCompiler, RenderVideo  # noqa: F401  -- used indirectly
+from src.application.render_cached_avatar import render_cached_avatar
+from src.core.logging import get_logger
 from src.domain.types import (
     IdentityId,
     IdentitySpec,
@@ -28,7 +30,11 @@ from src.domain.types import (
     RenderSpec,
 )
 from src.storage.avatar_packs import AvatarPackRepository
+from contracts.compositor import CompositeRequest
+from contracts.quality_checker import QCResult
 from workers.gpu_worker.telemetry import _id_from_str, read_pack_from_archive
+
+LOG = get_logger(__name__)
 
 
 def _process_impl(self, job: RenderJob, engine, repo: AvatarPackRepository):
@@ -81,6 +87,11 @@ def _do_process_impl(self, job: RenderJob, engine, repo: AvatarPackRepository):
     """
     payload = job.payload
     job_type = payload.get("job_type", "render")
+
+    # ── render_cached job (body template + face-region MuseTalk) ────────
+    # Opt-in path; dispatches via `payload.get("job_type") == "render_cached"`.
+    if job_type == "render_cached":
+        return self._do_process_render_cached(job, engine, repo)
 
     # ── compile-only job ──────────────────────────────────────
     if job_type == "compile":
@@ -190,6 +201,133 @@ def _do_process_impl(self, job: RenderJob, engine, repo: AvatarPackRepository):
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# render_cached job — body template + face-region MuseTalk + compositor + QC.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _do_process_render_cached_impl(
+    self, job: RenderJob, engine, repo: AvatarPackRepository
+):
+    """Process a ``job_type="render_cached"`` job.
+
+    Reads ``avatar_id`` / ``gesture_id`` / ``identity_id`` / ``audio_path`` /
+    optional ``source_image`` from the payload and feeds them into
+    :func:`src.application.render_cached_avatar.render_cached_avatar`.
+    Maps the seven-stage pipeline's QC verdict onto the worker's
+    :class:`JobState`:
+
+    * QC passed  → :attr:`JobState.COMPLETED` (``degraded=False``)
+    * QC failed  → :attr:`JobState.COMPLETED_DEGRADED` (``degraded=True``) —
+      the mp4 file is still on disk; metrics carry the QC verdict.
+    * engine raised before completion (real-mode fail-closed) →
+      :attr:`JobState.FAILED_INFERENCE` with the engine's error string
+      surfaced in ``result["error"]``.
+
+    ``result`` mirrors the schema :class:`JobResponse.from_job` already
+    reads (``output_path`` / ``duration_seconds`` / ``gpu_seconds`` /
+    ``degraded`` / ``engine_id`` / ``identity_id``); extras are exposed
+    as ``result["metrics"]`` and ``result["degraded_chunks"]=[]``.
+    """
+    payload = job.payload
+
+    # ── Required body-template identifiers; the API layer validates
+    # these synchronously, but we re-check here so a directly-published
+    # queue payload (bypassing /jobs) can't crash the worker.
+    avatar_id = payload.get("avatar_id")
+    gesture_id = payload.get("gesture_id")
+    if not avatar_id or not gesture_id:
+        raise RuntimeError(
+            f"render_cached job {job.id} requires avatar_id AND gesture_id; "
+            f"got avatar_id={avatar_id!r} gesture_id={gesture_id!r}"
+        )
+
+    identity_id = payload.get("identity_id", "")
+    audio_path = Path(payload["audio_path"])
+    source_image = payload.get("source_image")
+    source_image_path: Optional[Path] = (
+        Path(source_image) if source_image else None
+    )
+    fps = int(payload.get("fps", 25))
+
+    capture_dir = self.settings.capture_dir
+    output_path = capture_dir / job.id / "final.mp4"
+
+    try:
+        cached_result = render_cached_avatar(
+            avatar_id=avatar_id,
+            gesture_id=gesture_id,
+            identity_id=identity_id,
+            audio_path=audio_path,
+            output_path=output_path,
+            engine=engine,
+            source_image=source_image_path,
+            pack_repo=repo,
+            pack_root=self.settings.pack_dir,
+            capture_dir=capture_dir,
+            fps=fps,
+        )
+    except RuntimeError as exc:
+        # Real-mode engine failure (fail-closed). Surface as
+        # FAILED_INFERENCE so the operator can distinguish engine
+        # crashes from QC failures.
+        LOG.error(
+            "render_cached job %s failed at inference: %s", job.id, exc,
+            extra={"job_id": str(job.id)},
+        )
+        return JobState.FAILED_INFERENCE, {
+            "identity_id": identity_id,
+            "avatar_id": avatar_id,
+            "gesture_id": gesture_id,
+            "engine_id": self.engine_id.value,
+            "output_path": None,
+            "duration_seconds": 0.0,
+            "gpu_seconds": 0.0,
+            "degraded": True,
+            "degraded_chunks": [],
+            "total_chunks": 0,
+            "error": str(exc),
+            "failed_stage": "engine",
+        }
+
+    # The OUTPUT location the bench / capture viewer will pick up.
+    persisted_path = cached_result.final_path or cached_result.composited_path
+
+    # Map use-case QC verdict onto JobState.
+    qc_passed = cached_result.qc_result.passed
+    if qc_passed:
+        job_state = JobState.COMPLETED
+        degraded = False
+    else:
+        job_state = JobState.COMPLETED_DEGRADED
+        degraded = True
+
+    LOG.info(
+        "render_cached job %s finished: status=%s degraded=%s gpu=%.3fs wall=%.3fs",
+        job.id, cached_result.status, degraded,
+        cached_result.gpu_seconds, cached_result.wall_seconds,
+        extra={"job_id": str(job.id)},
+    )
+
+    return job_state, {
+        "identity_id": identity_id,
+        "avatar_id": avatar_id,
+        "gesture_id": gesture_id,
+        "engine_id": self.engine_id.value,
+        "output_path": str(persisted_path) if persisted_path else None,
+        "duration_seconds": float(cached_result.output_seconds),
+        "gpu_seconds": float(cached_result.gpu_seconds),
+        "wall_seconds": float(cached_result.wall_seconds),
+        "degraded": degraded,
+        "degraded_chunks": [],
+        "total_chunks": 0,  # not chunked — single-shot pipeline
+        "face_resolution": list(cached_result.face_resolution),
+        "batch_size": cached_result.batch_size,
+        "qc_status": cached_result.status,
+        "metrics": cached_result.metrics,
+    }
+
+
 # ── bind to GpuWorker ──────────────────────────────────────────────
 # Importing the class first then assigning the functions as attributes
 # turns them into bound methods when accessed via an instance. We
@@ -199,3 +337,4 @@ from workers.gpu_worker.worker import GpuWorker  # noqa: E402
 
 GpuWorker._process = _process_impl
 GpuWorker._do_process = _do_process_impl
+GpuWorker._do_process_render_cached = _do_process_render_cached_impl

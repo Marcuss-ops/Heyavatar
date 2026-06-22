@@ -7,12 +7,26 @@ latent back to RGB via the VAE, and writes an mp4.
 The methods here are attached to :class:`MuseTalkAdapter` at
 import time (see end of this file) so callers can use
 ``adapter._real_render_chunk(...)`` etc. via the instance.
+
+GPU-time measurement
+--------------------
+Per the "real cost measurement" sections of
+``docs/REPOSITORY_SLIMMING_PLAN.md`` we no longer synthesise
+``gpu_seconds``. The real path times UNet + VAE decode only (file
+reads, Whisper feature extraction, and the FFmpeg mp4 writer are
+deliberately excluded; see :func:`_time_inference`). CUDA Events are
+used whenever CUDA is available; the CPU / mock-engine branch falls
+back to a single ``time.perf_counter`` window so the metric still
+reflects actual wall-clock inference time. Mock-mode retains the
+deterministic linear estimate so the contract test stays stable across
+CI.
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Tuple
 
 from providers._ffmpeg import FACE_REGION_RESOLUTION, _read_pack_entry
 from providers.musetalk.adapter._upstream import _import_torch
@@ -24,6 +38,31 @@ from src.domain.types import (
 )
 
 
+def _time_inference(torch, op: Callable[[], object]) -> Tuple[float, object]:
+    """Time an inference closure, returning ``(seconds, op_result)``.
+
+    Uses :class:`torch.cuda.Event` when CUDA is available so the
+    measurement reflects GPU clock time, not elapsed wall time. The
+    CPU / mock path falls back to ``time.perf_counter`` so the metric
+    is still meaningful when the engine runs without CUDA. A
+    ``max(..., 0.001)`` floor prevents zero-second readings when the
+    fallback timer resolution beats the inference duration.
+    """
+    if torch is not None and getattr(torch, "cuda", None) is not None and torch.cuda.is_available():
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        result = op()
+        end.record()
+        torch.cuda.synchronize()
+        seconds = start.elapsed_time(end) / 1000.0
+    else:
+        t0 = time.perf_counter()
+        result = op()
+        seconds = time.perf_counter() - t0
+    return max(float(seconds), 0.001), result
+
+
 def _real_render_chunk_impl(
     self,
     request: RenderChunkRequest,
@@ -31,7 +70,13 @@ def _real_render_chunk_impl(
     clipped_end: float,
 ) -> RenderChunkResult:
     """Real-mode: load latent, extract audio features, UNet denoise,
-    VAE decode, and encode frames to mp4."""
+    VAE decode, and encode frames to mp4.
+
+    ``gpu_seconds`` returned in the :class:`RenderChunkResult` is the
+    measured UNet + VAE decode time only; file reads, Whisper audio
+    feature extraction, and the FFmpeg mp4 writer are excluded so the
+    metric is comparable across batch sizes and engine variants.
+    """
     torch = _import_torch()
     if torch is None:
         raise RuntimeError("PyTorch not available for render_chunk")
@@ -41,7 +86,7 @@ def _real_render_chunk_impl(
     duration = max(0.5, clipped_end - start)
     num_frames = int(round(duration * fps))
 
-    # ── 1. Load source latent from identity pack ──────────────
+    # ── 1. Load source latent from identity pack (CPU/IO, excluded) ─────
     latent_bytes = _read_pack_entry(
         identity.pack_path, "source_latent.bin"
     )
@@ -58,15 +103,14 @@ def _real_render_chunk_impl(
         torch=torch,
     )
 
-    # ── 3. UNet denoising ─────────────────────────────────────
-    rendered_frames = self._unet_denoise(
-        source_latent, audio_features, torch
-    )
+    # ── 3+4. UNet + VAE decode are the only stages billed as gpu_seconds ─
+    def _infer() -> object:
+        rendered = self._unet_denoise(source_latent, audio_features, torch)
+        return self._vae_decode_frames(rendered, torch)
 
-    # ── 4. VAE decode to RGB ──────────────────────────────────
-    rgb_frames = self._vae_decode_frames(rendered_frames, torch)
+    gpu_seconds, rgb_frames = _time_inference(torch, _infer)
 
-    # ── 5. Write mp4 ──────────────────────────────────────────
+    # ── 5. Write mp4 (FFmpeg, excluded from gpu_seconds) ──────────────
     from providers._ffmpeg import _write_frames_to_mp4
     out_dir = self.settings.capture_dir / request.job_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +129,7 @@ def _real_render_chunk_impl(
         output_path=out_path,
         duration_seconds=duration,
         frames_rendered=len(rgb_frames),
-        gpu_seconds=max(0.005, duration * 0.008),
+        gpu_seconds=gpu_seconds,
         engine_id=self.engine_id,
     )
 

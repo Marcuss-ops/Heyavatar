@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import argparse
-import subprocess
 import cv2
 import numpy as np
 from pathlib import Path
@@ -10,6 +9,15 @@ from pathlib import Path
 # Setup paths to import our local modules
 sys.path.insert(0, str(Path("src").resolve()))
 sys.path.insert(0, str(Path("providers").resolve()))
+
+# Canonical ROI + mux helpers — share one implementation with the
+# render_cached_avatar use case. Any change to the face-region pipeline
+# should land in src/application/render_video/face_region.py; the offline
+# tool stays a thin CLI wrapper around the same code.
+from src.application.render_video.face_region import (
+    extract_face_roi,
+    mux_audio,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # QC helpers
@@ -57,83 +65,6 @@ def qc_video_no_green(video_path: Path, sample_frames: int = 10) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline stages
 # ─────────────────────────────────────────────────────────────────────────────
-
-def extract_face_roi(
-    body_video_path: Path,
-    transforms_path: Path,
-    output_roi_path: Path,
-    debug_dir: Path | None = None,
-) -> None:
-    """Crop 256×256 face ROI from the template body using face_transforms.npz.
-
-    If *debug_dir* is provided a bounding-box preview video is written there;
-    the clean ROI goes to *output_roi_path*.
-    """
-    data = np.load(transforms_path)
-    bboxes = data["bbox"]
-
-    cap = cv2.VideoCapture(str(body_video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open body video: {body_video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    output_roi_path.parent.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_roi_path), fourcc, fps, (256, 256))
-
-    # Optional debug writer — bbox overlay stays in debug/, never in runtime/
-    debug_writer = None
-    if debug_dir is not None:
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        debug_path = debug_dir / "face_bbox_preview.mp4"
-        debug_writer = cv2.VideoWriter(
-            str(debug_path), fourcc, fps, (width, height)
-        )
-
-    print(f"Extracting 256x256 face ROI from {body_video_path}...")
-
-    frame_idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret or frame_idx >= len(bboxes):
-            break
-
-        bbox = bboxes[frame_idx]
-        x_min, y_min, x_max, y_max = bbox
-
-        cx = (x_min + x_max) // 2
-        cy = (y_min + y_max) // 2
-        size = int(max(x_max - x_min, y_max - y_min) * 1.3)
-
-        x1 = max(0, cx - size // 2)
-        y1 = max(0, cy - size // 2)
-        x2 = min(width, cx + size // 2)
-        y2 = min(height, cy + size // 2)
-
-        crop = frame[y1:y2, x1:x2]
-        if crop.size > 0:
-            resized = cv2.resize(crop, (256, 256), interpolation=cv2.INTER_LINEAR)
-            writer.write(resized)
-        else:
-            writer.write(np.zeros((256, 256, 3), dtype=np.uint8))
-
-        # Debug overlay — bbox rectangle drawn only on the debug preview
-        if debug_writer is not None:
-            dbg = frame.copy()
-            cv2.rectangle(dbg, (x1, y1), (x2, y2), (0, 200, 255), 2)
-            debug_writer.write(dbg)
-
-        frame_idx += 1
-
-    cap.release()
-    writer.release()
-    if debug_writer is not None:
-        debug_writer.release()
-    print(f"Face ROI video saved to: {output_roi_path}")
-
 
 def run_musetalk(
     roi_video_path: Path,
@@ -335,25 +266,6 @@ def pasteback_composite(
     if debug_neck_writer is not None:
         debug_neck_writer.release()
     print(f"Composite video saved to: {output_composite_path}")
-
-
-def mux_audio(video_path: Path, audio_path: Path, output_path: Path) -> None:
-    """Mux video and audio streams using FFmpeg."""
-    print("Muxing final audio...")
-    cmd = [
-        "ffmpeg",
-        "-i", str(video_path),
-        "-i", str(audio_path),
-        "-vcodec", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-shortest",
-        "-y",
-        str(output_path),
-    ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print(f"Final output video saved to: {output_path}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
