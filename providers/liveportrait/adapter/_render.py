@@ -47,6 +47,8 @@ from src.domain.types import (
     RenderChunkResult,
 )
 
+LOG = get_logger(__name__)
+
 
 def _motion_style_profile(style: str, intensity: float, *, eye_lock: bool = False) -> Dict[str, float]:
     """Return a small motion profile for the speaking avatar.
@@ -200,6 +202,17 @@ def _real_render_chunk_impl(
             orig_bytes = _read_pack_entry(identity.pack_path, "source_image_original.png")
             orig_img = Image.open(io.BytesIO(orig_bytes)).convert("RGB")
             img_ori = np.asarray(orig_img, dtype=np.uint8)
+            
+            bg_path = Path("assets/tv_studio_background.png")
+            if bg_path.is_file():
+                import cv2
+                from providers.compositing.opencv_face.compositor import apply_chroma_key
+                img_ori_bgr = cv2.cvtColor(img_ori, cv2.COLOR_RGB2BGR)
+                bg_image = cv2.imread(str(bg_path))
+                if bg_image is not None:
+                    keyed_bgr = apply_chroma_key(img_ori_bgr, bg_image)
+                    img_ori = cv2.cvtColor(keyed_bgr, cv2.COLOR_BGR2RGB)
+                    LOG.info("Successfully applied chroma keying to the original background portrait")
             
             mask_bytes = _read_pack_entry(identity.pack_path, "face_mask.png")
             mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
