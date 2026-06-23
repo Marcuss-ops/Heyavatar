@@ -114,6 +114,31 @@ def _draw_debug_overlay(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Chroma Key / Background Replacement helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def apply_chroma_key(body_frame: np.ndarray, bg_image: np.ndarray) -> np.ndarray:
+    """Detect green screen background and replace it with the TV studio image."""
+    hsv = cv2.cvtColor(body_frame, cv2.COLOR_BGR2HSV)
+    # Define a range for green screen green
+    lower_green = np.array([35, 40, 40], dtype=np.uint8)
+    upper_green = np.array([90, 255, 255], dtype=np.uint8)
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
+    
+    # Smooth the mask to avoid harsh edges
+    green_mask = cv2.GaussianBlur(green_mask, (15, 15), 0)
+    mask_normalized = green_mask.astype(np.float32) / 255.0
+    mask_3d = mask_normalized[..., np.newaxis]
+    
+    # Resize background image to fit body frame size
+    bg_resized = cv2.resize(bg_image, (body_frame.shape[1], body_frame.shape[0]))
+    
+    # Blend: keep body foreground, replace green background with TV studio
+    blended = body_frame.astype(np.float32) * (1.0 - mask_3d) + bg_resized.astype(np.float32) * mask_3d
+    return blended.clip(0, 255).astype(np.uint8)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main compositor
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -197,6 +222,14 @@ class OpenCVFaceCompositor(Compositor):
                 fourcc, fps, (width, height),
             )
 
+        # Check for TV studio background
+        bg_path = Path("assets/tv_studio_background.png")
+        bg_image = None
+        if bg_path.is_file():
+            bg_image = cv2.imread(str(bg_path))
+            if bg_image is not None:
+                LOG.info("Loaded TV studio background image: %s", bg_path)
+
         # State for temporal EMA
         prev_alpha: Optional[np.ndarray] = None
 
@@ -214,6 +247,9 @@ class OpenCVFaceCompositor(Compositor):
                 if not (ret_b and ret_f and ret_m and ret_n):
                     LOG.debug("Stream exhausted at frame %d", frame_idx)
                     break
+
+                if bg_image is not None:
+                    body_frame = apply_chroma_key(body_frame, bg_image)
 
                 # ── 1. Decode bbox ────────────────────────────────────────────
                 bbox = bboxes[frame_idx]

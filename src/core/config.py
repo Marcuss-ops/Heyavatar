@@ -69,6 +69,15 @@ class Settings:
     #                to ``dsp``; that policy is intentional.
     audio_bridge_backend: Literal["dsp", "neural"] = "dsp"
 
+    # Motion styling for LivePortrait render passes. ``balanced`` keeps
+    # the current default feel; ``expressive`` adds more head sway,
+    # nodding, blinking, and brow motion; ``subtle`` tones motion down.
+    motion_style: Literal["subtle", "balanced", "expressive"] = "balanced"
+    # Global multiplier applied to the motion style profile.
+    motion_intensity: float = 1.0
+    # Keep the gaze visually stable by damping head yaw / roll / lateral sway.
+    eye_lock: bool = False
+
     # Distributed heartbeat — workers publish their health JSON to
     # ``heyavatar:worker:{worker_id}:health`` every
     # ``worker_health_publish_seconds`` seconds, with the Redis key
@@ -121,6 +130,9 @@ class Settings:
             audio_bridge_backend=os.environ.get(  # type: ignore[arg-type]
                 "HEYAVATAR_AUDIO_BRIDGE_BACKEND", "dsp"
             ),
+            motion_style=os.environ.get("HEYAVATAR_MOTION_STYLE", "balanced"),  # type: ignore[arg-type]
+            motion_intensity=_env_float("HEYAVATAR_MOTION_INTENSITY", 1.0),
+            eye_lock=_env_bool("HEYAVATAR_EYE_LOCK", False),
             worker_health_publish_seconds=_env_float(
                 "HEYAVATAR_WORKER_HEALTH_PUBLISH_SECONDS", 3.0
             ),

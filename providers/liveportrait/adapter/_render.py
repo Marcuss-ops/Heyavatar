@@ -20,7 +20,7 @@ import math
 import random
 import time
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Dict, Tuple
 
 import numpy as np
 
@@ -46,6 +46,63 @@ from src.domain.types import (
     RenderChunkRequest,
     RenderChunkResult,
 )
+
+
+def _motion_style_profile(style: str, intensity: float, *, eye_lock: bool = False) -> Dict[str, float]:
+    """Return a small motion profile for the speaking avatar.
+
+    ``balanced`` preserves the current feel, ``subtle`` reduces the
+    amplitude for calmer content, and ``expressive`` boosts classic
+    speaking-head movement: nods, sway, blink frequency, and brow lift.
+    """
+    style_key = (style or "balanced").strip().lower()
+    presets: Dict[str, Dict[str, float]] = {
+        "subtle": {
+            "head_pitch": 0.70,
+            "head_yaw": 0.55,
+            "head_roll": 0.45,
+            "sway_x": 0.55,
+            "sway_y": 0.45,
+            "blink_rate": 0.80,
+            "brow_lift": 0.60,
+            "mouth_boost": 0.95,
+            "speech_nod": 0.80,
+        },
+        "balanced": {
+            "head_pitch": 1.00,
+            "head_yaw": 1.00,
+            "head_roll": 0.90,
+            "sway_x": 1.00,
+            "sway_y": 1.00,
+            "blink_rate": 1.00,
+            "brow_lift": 1.00,
+            "mouth_boost": 1.00,
+            "speech_nod": 1.00,
+        },
+        "expressive": {
+            "head_pitch": 1.85,
+            "head_yaw": 1.55,
+            "head_roll": 1.30,
+            "sway_x": 2.20,
+            "sway_y": 1.95,
+            "blink_rate": 1.70,
+            "brow_lift": 1.80,
+            "mouth_boost": 1.25,
+            "speech_nod": 2.15,
+        },
+    }
+    profile = dict(presets.get(style_key, presets["balanced"]))
+    scale = max(0.1, float(intensity))
+    for key in profile:
+        profile[key] *= scale
+    if eye_lock:
+        profile["head_yaw"] *= 0.35
+        profile["head_roll"] *= 0.35
+        profile["sway_x"] *= 0.20
+        profile["sway_y"] *= 0.45
+        profile["blink_rate"] *= 0.90
+        profile["brow_lift"] *= 0.85
+    return profile
 
 
 def _upstream_crop_module():
@@ -116,6 +173,14 @@ def _real_render_chunk_impl(
         end_seconds=end,
         fps=request.fps,
     )
+    motion_profile = _motion_style_profile(
+        getattr(self.settings, "motion_style", "balanced"),
+        getattr(self.settings, "motion_intensity", 1.0),
+        eye_lock=bool(
+            self.inf_cfg.extra.get("eye_lock", False)
+            or getattr(self.settings, "eye_lock", False)
+        ),
+    )
     f_s, kp_s, _exp_s = _load_source_bundle(identity.pack_path, torch, self._torch_device)
     
     # Load original background image and pasteback assets if not face_region_only
@@ -153,11 +218,22 @@ def _real_render_chunk_impl(
             M_c2o = None
 
     static_head = self.inf_cfg.extra.get("static_head", False)
+    eye_lock = bool(
+        self.inf_cfg.extra.get("eye_lock", False)
+        or getattr(self.settings, "eye_lock", False)
+    )
     # If the wrapper's stitching retargeting module is exposed, use the
     # full batched retarget path; otherwise fall back to the simpler
     # expression-delta mock-form.
     kp_d = _build_driving_keypoints(
-        driving, kp_s, torch, self._torch_device, self._wrapper, static_head=static_head
+        driving,
+        kp_s,
+        torch,
+        self._torch_device,
+        self._wrapper,
+        static_head=static_head,
+        eye_lock=eye_lock,
+        motion_profile=motion_profile,
     )
 
     warped_frames = []
@@ -309,6 +385,8 @@ def _build_driving_keypoints(
     device: Any,
     wrapper: Any = None,
     static_head: bool = False,
+    eye_lock: bool = False,
+    motion_profile: Dict[str, float] | None = None,
 ) -> np.ndarray:
     """Combine canonical source keypoints with the expression deltas.
 
@@ -322,6 +400,7 @@ def _build_driving_keypoints(
     matrices. Falls back to the simpler expression-delta form when
     the wrapper doesn't expose retargeting modules.
     """
+    motion_profile = motion_profile or _motion_style_profile("balanced", 1.0, eye_lock=eye_lock)
     if wrapper is not None and getattr(wrapper, "stitching_retargeting_module", None) is not None:
         fps = 25
 
@@ -338,14 +417,16 @@ def _build_driving_keypoints(
         rng = random.Random(42)
         blink_val_list = []
         blink_frames = -1
-        next_blink_delay = rng.randint(60, 120)  # 2.4s to 4.8s
+        blink_floor = max(24, int(60 / max(0.5, motion_profile["blink_rate"])))
+        blink_ceil = max(blink_floor + 1, int(120 / max(0.5, motion_profile["blink_rate"])))
+        next_blink_delay = rng.randint(blink_floor, blink_ceil)
         frames_since_blink = 0
 
         for i in range(driving.frames):
             if frames_since_blink >= next_blink_delay and blink_frames < 0:
                 blink_frames = 0
                 frames_since_blink = 0
-                next_blink_delay = rng.randint(60, 120)
+                next_blink_delay = rng.randint(blink_floor, blink_ceil)
 
             if blink_frames >= 0 and blink_frames <= 5:
                 blink_weights = [0.6, 0.2, 0.0, 0.0, 0.4, 0.8]
@@ -359,7 +440,9 @@ def _build_driving_keypoints(
             blink_val_list.append(blink_val)
 
         blink_vals = torch.tensor(blink_val_list, dtype=torch.float32, device=device)
-        target_eyes = 0.12 + blink_vals * 0.23
+        target_eyes = 0.12 + blink_vals * (0.23 * motion_profile["blink_rate"])
+        if eye_lock:
+            target_eyes = torch.clamp(0.15 + (target_eyes - 0.15) * 0.72, 0.08, 0.42)
         eye_close_ratios = torch.zeros((driving.frames, 3), dtype=torch.float32, device=device)
         eye_close_ratios[:, 0] = 0.35
         eye_close_ratios[:, 1] = 0.35
@@ -381,9 +464,24 @@ def _build_driving_keypoints(
             y_deg = torch.zeros_like(apertures)
             r_deg = torch.zeros_like(apertures)
         else:
-            p_deg = scales * torch.sin(2 * math.pi * 0.35 * t / fps) + 0.4 * apertures
-            y_deg = scales * torch.cos(2 * math.pi * 0.25 * t / fps)
-            r_deg = scales * 0.6 * torch.sin(2 * math.pi * 0.45 * t / fps)
+            speech_nod = 0.55 + apertures * motion_profile["speech_nod"]
+            p_deg = (
+                scales
+                * motion_profile["head_pitch"]
+                * torch.sin(2 * math.pi * 0.35 * t / fps)
+                + 0.4 * apertures * motion_profile["speech_nod"]
+                + 0.25 * speech_nod * torch.sin(2 * math.pi * 0.72 * t / fps)
+            )
+            y_deg = scales * motion_profile["head_yaw"] * torch.cos(2 * math.pi * 0.25 * t / fps)
+            r_deg = (
+                scales
+                * 0.6
+                * motion_profile["head_roll"]
+                * torch.sin(2 * math.pi * 0.45 * t / fps)
+            )
+            if eye_lock:
+                y_deg = y_deg * 0.35
+                r_deg = r_deg * 0.40
 
         p = torch.deg2rad(p_deg)
         y = torch.deg2rad(y_deg)
@@ -422,11 +520,27 @@ def _build_driving_keypoints(
         kp_d_rotated = torch.bmm(kp_d_batched - centroid, R.transpose(1, 2)) + centroid
 
         # Small translation/sway batch-wise
-        tx = torch.zeros_like(t) if static_head else 0.005 * torch.sin(2 * math.pi * 0.2 * t / fps)
-        ty = torch.zeros_like(t) if static_head else 0.005 * torch.cos(2 * math.pi * 0.15 * t / fps)
+        tx = (
+            torch.zeros_like(t)
+            if static_head
+            else 0.005 * motion_profile["sway_x"] * torch.sin(2 * math.pi * 0.2 * t / fps)
+        )
+        ty = (
+            torch.zeros_like(t)
+            if static_head
+            else 0.005 * motion_profile["sway_y"] * torch.cos(2 * math.pi * 0.15 * t / fps)
+        )
+        if eye_lock:
+            tx = tx * 0.25
+            ty = ty * 0.60
 
         kp_d_rotated[:, :, 0] += tx[:, None]
         kp_d_rotated[:, :, 1] += ty[:, None]
+        # Classic speaking-face motion: lightly lift the brows / upper
+        # face when the mouth opens so the avatar looks more alive.
+        brow_lift = torch.clamp(apertures * motion_profile["brow_lift"], 0.0, 1.0)
+        kp_d_rotated[:, :4, 1] -= 0.012 * brow_lift[:, None]
+        kp_d_rotated[:, 17:, 1] -= 0.006 * brow_lift[:, None]
 
         return kp_d_rotated.detach().cpu().numpy()
 
@@ -436,6 +550,11 @@ def _build_driving_keypoints(
     delta = np.asarray(driving.exp_d_flat, dtype=np.float32).reshape(
         driving.frames, N_KEYPOINTS, EXPRESSION_DIM
     )
+    mouth = np.asarray(driving.mouth_aperture, dtype=np.float32)
+    if mouth.shape[0] == driving.frames:
+        delta[:, 14:18, 1] *= motion_profile["mouth_boost"]
+        delta[:, :4, 1] -= 0.008 * mouth[:, None] * motion_profile["brow_lift"]
+        delta[:, 17:, 1] -= 0.004 * mouth[:, None] * motion_profile["brow_lift"]
     return base + delta
 
 

@@ -123,6 +123,42 @@ def probe_video_codec(video_path: Path) -> Optional[str]:
     return None
 
 
+def probe_has_streams(video_path: Path) -> tuple[bool, bool]:
+    """Check if the video file contains at least one video stream and one audio stream.
+
+    ``ffprobe`` is an absolute prereq for the v0 golden path. When it is
+    unavailable — or fails for any reason — we return ``(False, False)``,
+    which makes the QC gate's F (Stream-presence) check fail with
+    ``FAILED_QC_MISSING_STREAMS`` so an unverifiable file is never
+    silently passed.
+    """
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        LOG.warning("ffprobe not found; stream-presence check fails closed")
+        return False, False
+    try:
+        cmd = [
+            ffprobe, "-v", "quiet",
+            "-print_format", "json",
+            "-show_streams",
+            str(video_path),
+        ]
+        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=15)
+        info = json.loads(out)
+        has_video = False
+        has_audio = False
+        for stream in info.get("streams", []):
+            codec_type = stream.get("codec_type")
+            if codec_type == "video":
+                has_video = True
+            elif codec_type == "audio":
+                has_audio = True
+        return has_video, has_audio
+    except Exception as exc:
+        LOG.debug("ffprobe stream check failed: %s", exc)
+    return False, False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main checker
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,6 +319,27 @@ class VideoQualityChecker(QualityChecker):
                 errors=errors,
             )
 
+        # ── F. Stream presence check ──────────────────────────────────────────
+        has_video, has_audio = probe_has_streams(request.video_path)
+        if not has_video:
+            errors.append("No video stream found in the generated video file")
+        if not has_audio:
+            errors.append("No audio stream found in the generated video file")
+
+        if not has_video or not has_audio:
+            return QCResult(
+                passed=False,
+                status="FAILED_QC_MISSING_STREAMS",
+                debug_green_ratio=worst_green_ratio,
+                black_frame_ratio=black_frame_ratio,
+                duration_delta_ms=duration_delta_ms,
+                frames_expected=frames_expected,
+                frames_actual=total_frames,
+                invalid_transforms=0,
+                warnings=warnings,
+                errors=errors,
+            )
+
         # ── All checks passed ─────────────────────────────────────────────────
         return QCResult(
             passed=True,
@@ -305,4 +362,5 @@ __all__ = [
     "probe_video_duration",
     "probe_audio_duration",
     "probe_video_codec",
+    "probe_has_streams",
 ]

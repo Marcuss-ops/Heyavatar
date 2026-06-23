@@ -7,5 +7,11 @@ class RuleBasedQualityChecker(QualityChecker):
             passed=True,
             warnings=[],
             errors=[],
-            status="COMPLETED"
+            status="COMPLETED",
+            debug_green_ratio=0.0,
+            black_frame_ratio=0.0,
+            duration_delta_ms=0.0,
+            frames_expected=100,
+            frames_actual=100,
+            invalid_transforms=0
         )

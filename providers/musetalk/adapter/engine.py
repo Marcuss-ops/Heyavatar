@@ -135,26 +135,35 @@ class MuseTalkAdapter(AvatarEngine):
         * ``face_mask.png`` — paste-back mask (PNG).
         * ``identity_embedding.bin`` — pooled embedding (float32).
         * ``alignment_matrix.bin`` — affine alignment matrix (float32).
+
+        Mock-mode (``HEYAVATAR_MOCK_ENGINE=1``) returns deterministic
+        synthetic assets so CI stays green without GPU/weights.
+
+        Real mode is **fail-closed**: a degraded engine OR any
+        real-path exception propagates to the caller as
+        :class:`RuntimeError` so the orchestrator can surface
+        ``FAILED_INFERENCE`` instead of silently shipping a mock
+        identity to paying customers. The ``mock_engine`` flag is the
+        only permitted substitute for mock-pack assets.
         """
-        if self.settings.mock_engine or self._state == EngineState.UNLOADED:
+        # Mock-mode (or freshly-unloaded engine in mock mode): the
+        # only path that returns synthetic assets.
+        if self.settings.mock_engine:
             return _mock_identity_assets(source_image)
+
+        if self._state == EngineState.UNLOADED:
+            raise RuntimeError("MuseTalkAdapter is not loaded")
 
         if self._state == EngineState.DEGRADED:
-            LOG.warning(
-                "prepare_identity while DEGRADED; returning mock assets. "
-                "last_error=%s",
-                self._last_error,
+            raise RuntimeError(
+                f"MuseTalkAdapter is DEGRADED; cannot prepare_identity. "
+                f"last_error={self._last_error}"
             )
-            return _mock_identity_assets(source_image)
 
-        try:
-            return self._real_prepare_identity(source_image)
-        except Exception as exc:
-            LOG.error(
-                "Real-mode prepare_identity failed: %s; returning mock",
-                exc,
-            )
-            return _mock_identity_assets(source_image)
+        # Real-mode direct path. ``_real_prepare_identity`` already
+        # raises on its own errors (no try/except fallback that would
+        # mask a real failure with mock assets).
+        return self._real_prepare_identity(source_image)
 
     # ------------------------------------------------------------------
     # Chunk rendering
@@ -169,41 +178,31 @@ class MuseTalkAdapter(AvatarEngine):
         Mock mode: synthetic black mp4 of the right duration.
         Real mode: loads source latent from pack, extracts audio features
         via Whisper, runs UNet denoising, VAE decodes, and writes mp4.
+
+        Real mode is **fail-closed**: ``EngineState.DEGRADED`` and any
+        exception inside the real-path raise ``RuntimeError`` so the
+        orchestrator surfaces ``FAILED_INFERENCE`` instead of producing
+        a red-mock mp4 that the QC gate cannot tell apart from a real
+        failure.
         """
         _start, end = request.audio_window
         clipped_end = max(_start + 0.5, end)
 
-        if self.settings.mock_engine or self._state == EngineState.UNLOADED:
+        if self.settings.mock_engine:
             return _mock_render_chunk(
                 request, clipped_end, capture_dir=self.settings.capture_dir
             )
 
+        if self._state == EngineState.UNLOADED:
+            raise RuntimeError("MuseTalkAdapter is not loaded")
+
         if self._state == EngineState.DEGRADED:
-            LOG.warning(
-                "render_chunk while DEGRADED; emitting fallback mp4. "
-                "last_error=%s",
-                self._last_error,
-            )
-            return _mock_render_chunk(
-                request,
-                clipped_end,
-                capture_dir=self.settings.capture_dir,
-                degraded=True,
+            raise RuntimeError(
+                f"MuseTalkAdapter is DEGRADED; cannot render_chunk. "
+                f"last_error={self._last_error}"
             )
 
-        try:
-            return self._real_render_chunk(request, identity, clipped_end)
-        except Exception as exc:
-            LOG.error(
-                "MuseTalkAdapter.render_chunk crashed: %s; falling back",
-                exc,
-            )
-            return _mock_render_chunk(
-                request,
-                clipped_end,
-                capture_dir=self.settings.capture_dir,
-                degraded=True,
-            )
+        return self._real_render_chunk(request, identity, clipped_end)
 
     # ------------------------------------------------------------------
     # Health
