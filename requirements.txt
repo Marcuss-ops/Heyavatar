@@ -7,6 +7,7 @@ pydantic>=2.6
 PyYAML>=6.0
 numpy>=1.26
 Pillow>=10.0
+opencv-python>=4.8
 loguru>=0.7
 httpx>=0.27
 tenacity>=8.2
@@ -31,6 +32,7 @@ tenacity>=8.2
 # redis>=5.0                       # pip install -e ".[redis]"
 # aioboto3>=12.0                   # pip install -e ".[s3]"
 # torch>=2.0                       # pip install -e ".[gpu]"
+# edge-tts>=6.1                    # pip install -e ".[tts]"
 # sadtalker @ git+https://github.com/OpenTalker/SadTalker@v0.0.x  # pip install -e ".[audio-bridge-neural]"
 # librosa>=0.10                    # pip install -e ".[audio-bridge-neural]"  (SadTalker transitive)
 

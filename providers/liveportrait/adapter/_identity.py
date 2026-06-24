@@ -40,6 +40,7 @@ from typing import Any, Dict
 
 import numpy as np
 
+from src.application.avatar_image import build_green_screen_cutout_png, load_avatar_source_image
 from src.core.logging import get_logger
 
 
@@ -76,15 +77,15 @@ def _real_prepare_identity_impl(self, source_image: Path) -> Dict[str, bytes]:
 
     try:
         import cv2
-        from PIL import Image
         LOG = get_logger("providers.liveportrait")
 
         # Read the raw source image bytes first.
         source_image_original_bytes = source_image.read_bytes()
 
-        img = Image.open(source_image).convert("RGB")
+        img = load_avatar_source_image(source_image)
         img_np = np.asarray(img, dtype=np.uint8)  # HxWx3 uint8
         h_img, w_img = img_np.shape[:2]
+        cutout_png, green_ratio = build_green_screen_cutout_png(img_np)
 
         # ── Face detection cascade ─────────────────────────────
         # Priority order:
@@ -210,6 +211,7 @@ def _real_prepare_identity_impl(self, source_image: Path) -> Dict[str, bytes]:
             "schema": LIVE_PORTRAIT_PACK_VERSION,
             "upstream": PackSchema().upstream_url,
             "source_image": str(source_image),
+            "green_screen_ratio": f"{green_ratio:.4f}",
             "detector": detector_used,
             # ``mediapipe_attempted`` is the gate signal: it is True when
             # MediaPipe WAS the primary detector tried (regardless of
@@ -240,6 +242,7 @@ def _real_prepare_identity_impl(self, source_image: Path) -> Dict[str, bytes]:
                 transform_matrix, dtype=np.float32
             ).tobytes(),
             "source_image_original.png": source_image_original_bytes,
+            "source_image_cutout.png": cutout_png,
             "identity_meta.json": self._json_dump(meta_dict),
             "inference_config.json": self._json_dump(self.inf_cfg.to_dict()),
             "crop_config.json": self._json_dump(self._crop_to_dict(self.crop_cfg)),

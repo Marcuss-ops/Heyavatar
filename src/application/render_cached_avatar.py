@@ -45,6 +45,7 @@ from contracts.avatar_engine import AvatarEngine, EngineState
 from contracts.compositor import CompositeRequest
 from contracts.quality_checker import QCRequest, QCResult
 from src.application.compile_avatar import AvatarCompiler
+from src.application.body_template_runtime import match_body_template_duration
 from src.application.render_video.audio_probe import _probe_audio_duration
 from src.application.render_video.face_region import (
     FACE_REGION_RESOLUTION,
@@ -302,6 +303,13 @@ def render_cached_avatar(
     runtime_root.mkdir(parents=True, exist_ok=True)
     debug_dir = (runtime_root / "debug") if debug else None
 
+    audio_duration_seconds = _probe_audio_duration(audio_path)
+    body = match_body_template_duration(
+        body,
+        audio_duration_seconds or 0.0,
+        output_dir=runtime_root / "body_runtime",
+    )
+
     face_roi_path = runtime_root / "face_roi.mp4"
     extract_face_roi(
         body.body_video,
@@ -312,7 +320,6 @@ def render_cached_avatar(
     )
 
     # ── 4. MuseTalk face-region-only inference (single chunk) ──────────────
-    audio_duration_seconds = _probe_audio_duration(audio_path)
     chunk_request = RenderChunkRequest(
         job_id=job_id,
         audio_window=(0.0, audio_duration_seconds or 4.0),
