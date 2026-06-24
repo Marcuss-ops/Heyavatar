@@ -45,6 +45,7 @@ def _make_render_job(
     identity_id: str = "id-alice",
     source_image: str = "",
     audio_path: str = "",
+    motion_style: str | None = None,
 ) -> RenderJob:
     """Build a minimal render job for _do_process."""
     now = datetime.now(timezone.utc)
@@ -58,6 +59,7 @@ def _make_render_job(
             "audio_path": audio_path,
             "fps": 25,
             "tier": "express",
+            "motion_style": motion_style,
         },
         created_at=now,
         updated_at=now,

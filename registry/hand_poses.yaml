@@ -1,0 +1,61 @@
+poses:
+  neutral_desk:
+    both_hands_visible: true
+    right_wrist_height_range: [0.0, 0.08]
+    left_wrist_height_range: [0.0, 0.08]
+
+  right_hand_rising:
+    moving_hand: right
+    state: rise
+    duration_seconds: [0.45, 0.85]
+
+  right_hand_up:
+    moving_hand: right
+    state: hold
+    duration_seconds: [0.8, 2.0]
+
+  right_hand_lowering:
+    moving_hand: right
+    state: return
+    duration_seconds: [0.45, 0.85]
+
+  left_hand_rising:
+    moving_hand: left
+    state: rise
+    duration_seconds: [0.45, 0.85]
+
+  left_hand_up:
+    moving_hand: left
+    state: hold
+    duration_seconds: [0.8, 2.0]
+
+  left_hand_lowering:
+    moving_hand: left
+    state: return
+    duration_seconds: [0.45, 0.85]
+
+  both_hands_open:
+    moving_hand: both
+    state: hold
+    duration_seconds: [0.8, 2.5]
+
+transitions:
+  neutral_to_right_up:
+    moving_hand: right
+    min_duration_seconds: 0.45
+    max_duration_seconds: 0.85
+
+  right_up_to_neutral:
+    moving_hand: right
+    min_duration_seconds: 0.45
+    max_duration_seconds: 0.85
+
+  neutral_to_left_up:
+    moving_hand: left
+    min_duration_seconds: 0.45
+    max_duration_seconds: 0.85
+
+  left_up_to_neutral:
+    moving_hand: left
+    min_duration_seconds: 0.45
+    max_duration_seconds: 0.85

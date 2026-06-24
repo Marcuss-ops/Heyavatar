@@ -201,6 +201,7 @@ class RenderVideo:
                 chunk_index=index,
                 overlap_seconds=cfg.overlap_seconds if start > 0 else 0.0,
                 face_region_only=request.render_spec.face_region_only,
+                face_motion_timeline_path=None,
             )
             start = end - cfg.overlap_seconds if cfg.overlap_seconds > 0 else end
             index += 1

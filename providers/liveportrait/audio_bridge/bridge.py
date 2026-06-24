@@ -141,7 +141,8 @@ def _audio_to_driving_dsp(
 
     max_ap = max(mouth_aperture) if mouth_aperture else 0.0
     if max_ap > 0.001:
-        scale_factor = 1.0 / max(0.02, max_ap)
+        # Scale to max amplitude of 0.80 instead of 1.0 to damp overall mouth aperture ranges
+        scale_factor = 0.80 / max(0.02, max_ap)
         mouth_aperture = [min(1.0, val * scale_factor) for val in mouth_aperture]
 
     exp_d: List[float] = []

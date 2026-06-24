@@ -77,7 +77,7 @@ def test_mouth_aperture_zero_jaw_is_zero():
 def test_mouth_aperture_neutral_jaw_is_half():
     jaw = np.asarray([0.6, 0.0, 0.0], dtype=np.float32)  # ||jaw||=0.6
     ap = mouth_aperture_from_jaw(jaw)
-    assert ap == pytest.approx(0.5, abs=1e-5)
+    assert ap == pytest.approx(0.75, abs=1e-5)
 
 
 def test_mouth_aperture_open_jaw_saturates_to_one():

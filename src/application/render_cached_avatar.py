@@ -64,6 +64,7 @@ from providers.compositing.opencv_face.compositor import OpenCVFaceCompositor
 from src.quality.video_quality import VideoQualityChecker
 from src.storage.avatar_packs import AvatarPackRepository
 from src.motion.benchmark import benchmark_pose_track
+from src.motion.face_motion_timeline import FaceMotionTimeline
 from src.motion.pose_graph import PoseGraphTrack
 
 LOG = get_logger(__name__)
@@ -203,6 +204,7 @@ def render_cached_avatar(
     body_template_loader: Callable[..., BodyTemplate] = load_body_template,
     body_templates_dir: Path | str = "body_templates",
     motion_track_path: Optional[Path] = None,
+    face_motion_timeline_path: Optional[Path] = None,
     debug: bool = False,
 ) -> RenderCachedAvatarResult:
     """Run the :class:`BodyTemplate` + face-region + MuseTalk pipeline.
@@ -229,6 +231,10 @@ def render_cached_avatar(
         motion_track_path: Optional hand/body motion asset. If supplied,
             the motion summary is included in metrics and can auto-resolve
             ``gesture_id`` when set to ``"auto"``.
+        face_motion_timeline_path: Optional hand-free facial timeline JSON
+            path. When provided, it is surfaced in the metrics so the
+            downstream render/logging flow can stay aligned with the new
+            face-only motion layer.
         debug: When True, the compositor writes its debug previews.
 
     Returns:
@@ -245,6 +251,7 @@ def render_cached_avatar(
     # ── 1. Body template — fail-closed validation ──────────────────────────
     motion_track: PoseGraphTrack | None = None
     motion_summary: dict[str, object] | None = None
+    face_motion_summary: dict[str, object] | None = None
     effective_gesture_id = gesture_id
     if motion_track_path is not None and motion_track_path.is_file():
         motion_track = PoseGraphTrack.from_npz(motion_track_path)
@@ -256,6 +263,20 @@ def render_cached_avatar(
         }
         if gesture_id == "auto":
             effective_gesture_id = _gesture_from_pose_track(motion_track)
+    if face_motion_timeline_path is not None and face_motion_timeline_path.is_file():
+        try:
+            face_timeline = FaceMotionTimeline.from_dict(
+                json.loads(face_motion_timeline_path.read_text(encoding="utf-8"))
+            )
+            face_motion_summary = {
+                "duration": face_timeline.duration,
+                "fps": face_timeline.fps,
+                "segment_count": len(face_timeline.segments),
+                "motion_ids": [seg.motion_id for seg in face_timeline.segments],
+                "families": sorted({seg.family for seg in face_timeline.segments}),
+            }
+        except Exception:
+            face_motion_summary = {"path": str(face_motion_timeline_path)}
 
     body = body_template_loader(avatar_id, effective_gesture_id, base_dir=body_templates_dir)
     body_cache_hit = True
@@ -301,6 +322,7 @@ def render_cached_avatar(
         chunk_index=0,
         overlap_seconds=0.0,
         face_region_only=True,
+        face_motion_timeline_path=face_motion_timeline_path,
     )
     t0 = time.perf_counter()
     chunk_result = engine.render_chunk(chunk_request, handle)
@@ -375,7 +397,11 @@ def render_cached_avatar(
         "model_warm": model_warm,
         "face_region_only": True,
         "motion_track_path": str(motion_track_path) if motion_track_path else "",
+        "face_motion_timeline_path": str(face_motion_timeline_path)
+        if face_motion_timeline_path
+        else "",
         "motion_track": motion_summary or {},
+        "face_motion_timeline": face_motion_summary or {},
         "qc": {
             "debug_green_ratio": qc_result.debug_green_ratio,
             "black_frame_ratio": qc_result.black_frame_ratio,

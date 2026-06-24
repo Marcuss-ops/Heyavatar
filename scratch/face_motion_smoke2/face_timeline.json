@@ -1,0 +1,66 @@
+{
+  "duration": 6.0,
+  "fps": 25,
+  "segments": [
+    {
+      "kind": "idle",
+      "start": 0.0,
+      "end": 1.2819,
+      "motion_id": "face_idle_soft",
+      "intensity": 0.0,
+      "anchor_word": "",
+      "text_span": "",
+      "family": "idle"
+    },
+    {
+      "kind": "gesture",
+      "start": 1.2819,
+      "end": 2.2819,
+      "motion_id": "nod_small",
+      "intensity": 0.65,
+      "anchor_word": "conclusione",
+      "text_span": "conclusione",
+      "family": "head"
+    },
+    {
+      "kind": "idle",
+      "start": 2.2819,
+      "end": 2.8638,
+      "motion_id": "face_idle_soft",
+      "intensity": 0.0,
+      "anchor_word": "",
+      "text_span": "",
+      "family": "idle"
+    },
+    {
+      "kind": "gesture",
+      "start": 2.8638,
+      "end": 3.6638,
+      "motion_id": "brow_raise_small",
+      "intensity": 0.75,
+      "anchor_word": "molto",
+      "text_span": "molto",
+      "family": "brow"
+    },
+    {
+      "kind": "idle",
+      "start": 3.6638,
+      "end": 5.5723,
+      "motion_id": "face_idle_soft",
+      "intensity": 0.0,
+      "anchor_word": "",
+      "text_span": "",
+      "family": "idle"
+    },
+    {
+      "kind": "gesture",
+      "start": 5.5723,
+      "end": 6.0,
+      "motion_id": "question_face",
+      "intensity": 0.7,
+      "anchor_word": "?",
+      "text_span": "?",
+      "family": "expression"
+    }
+  ]
+}

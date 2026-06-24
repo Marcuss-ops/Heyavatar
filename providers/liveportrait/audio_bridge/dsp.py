@@ -144,5 +144,5 @@ def _autocorrelation_pitch(slice_: List[int], sample_rate: int) -> float:
 
 
 def _smooth_mouth(prev: float, new: float) -> float:
-    """Single-pole IIR smoothing with alpha = 0.6 for mouth aperture."""
-    return prev * 0.4 + new * 0.6
+    """Single-pole IIR smoothing for mouth aperture."""
+    return prev * 0.8 + new * 0.2

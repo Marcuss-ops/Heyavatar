@@ -79,6 +79,7 @@ class RenderChunkRequest:
     chunk_index: int = 0
     overlap_seconds: float = 0.0
     face_region_only: bool = False  # render face crop only, save VRAM
+    face_motion_timeline_path: Optional[Path] = None
 
 
 @dataclass(slots=True, frozen=True)

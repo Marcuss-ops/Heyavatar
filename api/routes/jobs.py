@@ -64,6 +64,7 @@ def submit_job(payload: JobSubmitRequest, request: Request) -> JobSubmitResponse
             attributes={
                 "heyavatar.job_id": str(job_id),
                 "heyavatar.tier": str(tier_value),
+                "heyavatar.motion_style": str(queue_payload.get("motion_style") or "natural"),
             },
         ):
             job = RenderJob(

@@ -69,10 +69,11 @@ class Settings:
     #                to ``dsp``; that policy is intentional.
     audio_bridge_backend: Literal["dsp", "neural"] = "dsp"
 
-    # Motion styling for LivePortrait render passes. ``balanced`` keeps
-    # the current default feel; ``expressive`` adds more head sway,
-    # nodding, blinking, and brow motion; ``subtle`` tones motion down.
-    motion_style: Literal["subtle", "balanced", "expressive"] = "balanced"
+    # Motion styling for LivePortrait render passes. ``natural`` is the
+    # user-facing default; ``balanced`` remains as a backwards-compatible
+    # alias. ``expressive`` adds more head sway, nodding, blinking, and
+    # brow motion; ``subtle`` tones motion down.
+    motion_style: Literal["subtle", "natural", "balanced", "expressive"] = "natural"
     # Global multiplier applied to the motion style profile.
     motion_intensity: float = 1.0
     # Keep the gaze visually stable by damping head yaw / roll / lateral sway.
@@ -130,7 +131,7 @@ class Settings:
             audio_bridge_backend=os.environ.get(  # type: ignore[arg-type]
                 "HEYAVATAR_AUDIO_BRIDGE_BACKEND", "dsp"
             ),
-            motion_style=os.environ.get("HEYAVATAR_MOTION_STYLE", "balanced"),  # type: ignore[arg-type]
+            motion_style=os.environ.get("HEYAVATAR_MOTION_STYLE", "natural"),  # type: ignore[arg-type]
             motion_intensity=_env_float("HEYAVATAR_MOTION_INTENSITY", 1.0),
             eye_lock=_env_bool("HEYAVATAR_EYE_LOCK", False),
             worker_health_publish_seconds=_env_float(

@@ -119,8 +119,18 @@ def mouth_aperture_from_jaw(
     if single:
         jaw_coefs = jaw_coefs[np.newaxis, :]
     magnitudes = np.linalg.norm(jaw_coefs.astype(np.float32), axis=-1)
-    # 0.6 (neutral) → 0.5, 0.6 - 1.2 (open) → 0.5 - 1.0
-    apertures = np.clip((magnitudes - 0.6) / 0.6 + 0.5, 0.0, 1.0)
+    # Map magnitudes linearly to [0.0, 1.0] using 0.8 as max to eliminate dead-zone and lag
+    apertures = np.clip(magnitudes / 0.8, 0.0, 1.0)
+    
+    # Secondary EMA smoothing on apertures to filter out high-frequency frame-level noise
+    if apertures.shape[0] > 1:
+        smoothed = np.zeros_like(apertures)
+        smoothed[0] = apertures[0]
+        for i in range(1, len(apertures)):
+            # Smooth with EMA (alpha=0.65) to keep speech movements fluid and natural
+            smoothed[i] = 0.65 * smoothed[i - 1] + 0.35 * apertures[i]
+        apertures = smoothed
+
     if single:
         return apertures[0]
     return apertures
@@ -141,6 +151,25 @@ def sadtalker_coefs_to_driving_flat(
     This is the single entry point used by
     :mod:`providers.liveportrait.audio_bridge.bridge`.
     """
+    # Temporal smoothing using a rolling window of size 5 with edge padding to avoid edge zero-fade
+    window_size = 5
+    if exp_coefs.ndim == 2 and exp_coefs.shape[0] > window_size:
+        kernel = np.ones(window_size) / window_size
+        
+        # Smooth exp_coefs
+        smoothed_exp = exp_coefs.copy()
+        for col in range(exp_coefs.shape[1]):
+            padded = np.pad(exp_coefs[:, col], window_size // 2, mode='edge')
+            smoothed_exp[:, col] = np.convolve(padded, kernel, mode='valid')
+        exp_coefs = smoothed_exp
+        
+        # Smooth jaw_coefs
+        smoothed_jaw = jaw_coefs.copy()
+        for col in range(jaw_coefs.shape[1]):
+            padded = np.pad(jaw_coefs[:, col], window_size // 2, mode='edge')
+            smoothed_jaw[:, col] = np.convolve(padded, kernel, mode='valid')
+        jaw_coefs = smoothed_jaw
+
     delta = project_3dmm_to_keypoint_delta(exp_coefs)
     aperture = mouth_aperture_from_jaw(jaw_coefs)
     return delta, aperture

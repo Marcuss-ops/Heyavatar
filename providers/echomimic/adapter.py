@@ -25,6 +25,7 @@ from src.domain.types import (
 )
 from providers.liveportrait.adapter.engine import LivePortraitAdapter
 from providers._ffmpeg import _seed_from_path, _write_dummy_mp4
+from providers._ffmpeg import face_motion_signature
 
 
 @dataclass(slots=True)
@@ -56,7 +57,27 @@ class EchoMimicAdapter(LivePortraitAdapter):
         out_dir = self.settings.capture_dir / request.job_id
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"chunk_{request.chunk_index:04d}.mp4"
-        _write_dummy_mp4(out_path, duration=max(0.5, end - _start or 0.5), fps=request.fps)
+        face_profile = face_motion_signature(request.face_motion_timeline_path)
+        motion_ids = face_profile.get("motion_ids", [])
+        colour = "0x111111"
+        if "question_face" in motion_ids:
+            colour = "0x552222"
+        elif "brow_raise_small" in motion_ids:
+            colour = "0x555522"
+        elif "smile_small" in motion_ids:
+            colour = "0x225555"
+        _write_dummy_mp4(out_path, duration=max(0.5, end - _start or 0.5), fps=request.fps, colour=colour)
+        out_path.with_suffix(".face_motion.json").write_text(
+            __import__("json").dumps(
+                {
+                    "engine_id": EngineId.ECHO_MIMIC.value,
+                    "face_motion": face_profile,
+                    "colour": colour,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         # EchoMimic halves the body; ~50% more time per chunk relative to head-only.
         return RenderChunkResult(
             chunk_index=request.chunk_index,

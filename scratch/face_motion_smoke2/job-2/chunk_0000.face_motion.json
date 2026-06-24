@@ -1,0 +1,25 @@
+{
+  "engine_id": "liveportrait-human-v1",
+  "degraded": false,
+  "colour": "0x223344",
+  "face_motion": {
+    "path": "scratch\\face_motion_smoke2\\face_timeline.json",
+    "duration": 6.0,
+    "fps": 25,
+    "segment_count": 6,
+    "motion_ids": [
+      "face_idle_soft",
+      "nod_small",
+      "face_idle_soft",
+      "brow_raise_small",
+      "face_idle_soft",
+      "question_face"
+    ],
+    "families": [
+      "brow",
+      "expression",
+      "head",
+      "idle"
+    ]
+  }
+}

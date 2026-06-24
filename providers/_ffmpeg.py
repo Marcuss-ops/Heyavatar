@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Tuple
+import json
 
 import numpy as np
 
@@ -69,6 +70,7 @@ def write_frames_to_mp4(
     fps: int,
     target_resolution: Tuple[int, int],
     hwaccel: bool | None = None,
+    audio_path: Path | None = None,
 ) -> None:
     """Encode a list of ``[H, W, 3]`` numpy uint8 frames to a single mp4.
 
@@ -88,6 +90,7 @@ def write_frames_to_mp4(
         hwaccel = shutil.which("nvidia-smi") is not None
     codec = "h264_nvenc" if hwaccel else "libx264"
     width, height = target_resolution
+    
     pipe_cmd = [
         ffmpeg,
         "-y",
@@ -97,10 +100,26 @@ def write_frames_to_mp4(
         "-s", f"{width}x{height}",
         "-r", str(fps),
         "-i", "-",
+    ]
+    
+    if audio_path is not None and audio_path.is_file():
+        pipe_cmd.extend([
+            "-i", str(audio_path),
+        ])
+        
+    pipe_cmd.extend([
         "-c:v", codec,
         "-pix_fmt", "yuv420p",
-        str(path),
-    ]
+    ])
+    
+    if audio_path is not None and audio_path.is_file():
+        pipe_cmd.extend([
+            "-c:a", "aac",
+            "-shortest",
+        ])
+        
+    pipe_cmd.append(str(path))
+    
     process = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE,
                                stdout=subprocess.DEVNULL,
                                stderr=subprocess.PIPE)
@@ -170,6 +189,32 @@ def to_uint8_hwc(tensor: Any) -> np.ndarray:
     return (arr * 255).clip(0, 255).astype(np.uint8) if arr.dtype != np.uint8 else arr
 
 
+def face_motion_signature(face_motion_timeline_path: Path | None) -> Dict[str, Any]:
+    """Summarise a face motion timeline JSON sidecar.
+
+    The mock render path uses this so the request is *consumed* in a
+    testable way instead of merely being passed through.
+    """
+    if face_motion_timeline_path is None or not face_motion_timeline_path.is_file():
+        return {}
+    try:
+        payload = json.loads(face_motion_timeline_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"path": str(face_motion_timeline_path)}
+
+    segments = payload.get("segments", []) if isinstance(payload, dict) else []
+    motion_ids = [str(seg.get("motion_id", "")) for seg in segments if isinstance(seg, dict)]
+    families = sorted({str(seg.get("family", "")) for seg in segments if isinstance(seg, dict) and seg.get("family")})
+    return {
+        "path": str(face_motion_timeline_path),
+        "duration": float(payload.get("duration", 0.0)) if isinstance(payload, dict) else 0.0,
+        "fps": int(payload.get("fps", 25)) if isinstance(payload, dict) else 25,
+        "segment_count": len(segments),
+        "motion_ids": motion_ids,
+        "families": families,
+    }
+
+
 # ── backwards-compat aliases (for adapter import migration) ────────
 
 _write_dummy_mp4 = write_dummy_mp4
@@ -178,3 +223,4 @@ _read_pack_entry = read_pack_entry
 _seed_from_path = seed_from_path
 _json_dump = json_dump
 _to_uint8_hwc = to_uint8_hwc
+face_motion_signature = face_motion_signature

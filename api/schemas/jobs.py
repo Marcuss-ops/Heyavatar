@@ -18,6 +18,12 @@ class JobSubmitRequest(BaseModel):
     audio_path: str = Field(..., description="Path to the audio file to drive the video.")
     fps: int = Field(25, ge=1, le=60)
     tier: str = Field("express", description="One of: express | studio | premium.")
+    motion_style: Optional[str] = Field(
+        None,
+        description="Optional motion profile: subtle | natural | balanced | expressive.",
+    )
+    text: Optional[str] = Field(None, description="Optional text script for text-driven timeline.")
+    mode: Optional[str] = Field("timeline", description="Optional mode: timeline | dominant.")
     callback_url: Optional[str] = Field(None, description="Optional webhook for completion.")
     client_reference: Optional[str] = Field(None, description="User-supplied id for tracing.")
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -29,12 +35,13 @@ class JobSubmitRequest(BaseModel):
             "audio_path": self.audio_path,
             "fps": self.fps,
             "tier": self.tier,
+            "motion_style": self.motion_style,
+            "text": self.text,
+            "mode": self.mode,
             "callback_url": self.callback_url,
             "client_reference": self.client_reference,
             "metadata": self.metadata,
         }
-
-
 class JobSubmitResponse(BaseModel):
     job_id: RenderJobId
     state: JobState

@@ -76,6 +76,7 @@ def mux_audio(video_path: Path, audio_path: Path, output_path: Path) -> None:
         "-i", str(video_path),
         "-i", str(audio_path),
         "-vcodec", "libx264",
+        "-acodec", "aac",
         "-pix_fmt", "yuv420p",
         "-map", "0:v:0",
         "-map", "1:a:0",
@@ -84,3 +85,4 @@ def mux_audio(video_path: Path, audio_path: Path, output_path: Path) -> None:
         str(output_path),
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+

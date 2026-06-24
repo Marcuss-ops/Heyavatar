@@ -16,6 +16,7 @@ from providers._ffmpeg import (
     FACE_REGION_RESOLUTION,
     _seed_from_path,
     _write_dummy_mp4,
+    face_motion_signature,
 )
 from src.domain.enums import EngineId
 from src.domain.types import RenderChunkRequest, RenderChunkResult
@@ -57,9 +58,33 @@ def _mock_render_chunk(
     out_dir = capture_dir / request.job_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"chunk_{request.chunk_index:04d}.mp4"
-    colour = "0x111111" if not degraded else "0x330000"
+    face_profile = face_motion_signature(request.face_motion_timeline_path)
+    motion_ids = face_profile.get("motion_ids", [])
+    if degraded:
+        colour = "0x330000"
+    elif "question_face" in motion_ids:
+        colour = "0x223344"
+    elif "brow_raise_small" in motion_ids:
+        colour = "0x334422"
+    elif "smile_small" in motion_ids:
+        colour = "0x224433"
+    else:
+        colour = "0x111111"
     resolution = FACE_REGION_RESOLUTION if request.face_region_only else (512, 512)
     _write_dummy_mp4(out_path, duration=duration, fps=request.fps, colour=colour, resolution=resolution)
+    sidecar = out_path.with_suffix(".face_motion.json")
+    sidecar.write_text(
+        __import__("json").dumps(
+            {
+                "engine_id": EngineId.LIVE_PORTRAIT.value,
+                "degraded": degraded,
+                "colour": colour,
+                "face_motion": face_profile,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return RenderChunkResult(
         chunk_index=request.chunk_index,
         output_path=out_path,

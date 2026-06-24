@@ -120,6 +120,30 @@ class LivePortraitAdapter(AvatarEngine):
             self._wrapper = upstream.LivePortraitWrapper(
                 inference_cfg=inf_upstream
             )
+            # Cast model submodules to half precision if flag_use_half_precision is True
+            if self.inf_cfg.flag_use_half_precision and not self.settings.mock_engine:
+                if hasattr(self._wrapper, "appearance_feature_extractor") and self._wrapper.appearance_feature_extractor is not None:
+                    self._wrapper.appearance_feature_extractor = self._wrapper.appearance_feature_extractor.half()
+                if hasattr(self._wrapper, "motion_extractor") and self._wrapper.motion_extractor is not None:
+                    self._wrapper.motion_extractor = self._wrapper.motion_extractor.half()
+                if hasattr(self._wrapper, "warping_module") and self._wrapper.warping_module is not None:
+                    self._wrapper.warping_module = self._wrapper.warping_module.half()
+                if hasattr(self._wrapper, "spade_generator") and self._wrapper.spade_generator is not None:
+                    self._wrapper.spade_generator = self._wrapper.spade_generator.half()
+
+            # Warm up CUDA kernels to shift compilation overhead into the load phase
+            if not self.settings.mock_engine:
+                try:
+                    LOG.info("Warming up CUDA kernels via dummy inference...")
+                    dtype = torch.float16 if self.inf_cfg.flag_use_half_precision else torch.float32
+                    dummy_f_s = torch.zeros((1, 32, 16, 64, 64), dtype=dtype, device=self._torch_device)
+                    dummy_kp_s = torch.zeros((1, 21, 3), dtype=dtype, device=self._torch_device)
+                    dummy_kp_d = torch.zeros((1, 21, 3), dtype=dtype, device=self._torch_device)
+                    self._wrapper.warp_decode(dummy_f_s, dummy_kp_s, dummy_kp_d)
+                    LOG.info("CUDA warmup completed successfully.")
+                except Exception as warmup_exc:
+                    LOG.warning("CUDA warmup failed (non-fatal): %s", warmup_exc)
+
             self._pipeline = None  # not used; kept for type compat
             self._loaded_at = time.monotonic()
             self._state = EngineState.IDLE

@@ -16,6 +16,7 @@ from typing import List
 
 from providers._ffmpeg import FACE_REGION_RESOLUTION, _read_pack_entry
 from providers.musetalk.adapter._upstream import _import_torch
+from src.motion.face_bias import load_face_motion_timeline, sample_face_motion_biases
 from src.core.logging import get_logger
 from src.domain.types import (
     AvatarIdentityHandle,
@@ -57,6 +58,20 @@ def _real_render_chunk_impl(
         num_frames=num_frames,
         torch=torch,
     )
+    face_motion_timeline = load_face_motion_timeline(request.face_motion_timeline_path)
+    face_biases = sample_face_motion_biases(
+        face_motion_timeline,
+        frames=num_frames,
+        fps=fps,
+    )
+    if face_biases["mouth"]:
+        scale = torch.as_tensor(
+            [1.0 + 0.04 * m + 0.02 * b for m, b in zip(face_biases["mouth"], face_biases["brow"])],
+            dtype=torch.float32,
+            device=self._torch_device,
+        )
+        if audio_features.ndim >= 2 and audio_features.shape[0] == scale.shape[0]:
+            audio_features = audio_features * scale[:, None]
 
     # ── 3. UNet denoising ─────────────────────────────────────
     rendered_frames = self._unet_denoise(

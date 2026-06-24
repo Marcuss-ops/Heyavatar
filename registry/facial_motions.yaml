@@ -1,0 +1,49 @@
+motions:
+  - id: face_idle_soft
+    name: Face Idle Soft
+    duration_seconds: 2.5
+    intensity: 0.12
+    family: idle
+    tags: ["neutral", "breathing", "subtle"]
+    requires_hands: false
+    notes: "Resting expression with minimal micro-movement."
+  - id: blink_soft
+    name: Blink Soft
+    duration_seconds: 0.5
+    intensity: 0.08
+    family: eye
+    tags: ["blink", "attention"]
+    requires_hands: false
+    notes: "A lightweight blink cue for natural timing."
+  - id: brow_raise_small
+    name: Brow Raise Small
+    duration_seconds: 0.8
+    intensity: 0.2
+    family: brow
+    tags: ["emphasis", "question", "micro-expression"]
+    requires_hands: false
+    notes: "Tiny eyebrow lift for emphasis or curiosity."
+  - id: smile_small
+    name: Smile Small
+    duration_seconds: 1.0
+    intensity: 0.22
+    family: mouth
+    tags: ["positive", "warm", "friendly"]
+    requires_hands: false
+    notes: "Soft, friendly smile without broad jaw motion."
+  - id: nod_small
+    name: Nod Small
+    duration_seconds: 1.0
+    intensity: 0.18
+    family: head
+    tags: ["agreement", "counting", "confirmation"]
+    requires_hands: false
+    notes: "Minimal nod for agreement or list pacing."
+  - id: question_face
+    name: Question Face
+    duration_seconds: 1.2
+    intensity: 0.25
+    family: expression
+    tags: ["question", "uncertainty", "engagement"]
+    requires_hands: false
+    notes: "Raised brow plus slight mouth tension."
