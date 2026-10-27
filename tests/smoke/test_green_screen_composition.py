@@ -91,6 +91,8 @@ class TestGreenScreenComposition(unittest.TestCase):
             ret, frame = cap.read()
             self.assertTrue(ret)
             cap.release()
+
+            self.assertEqual(frame.shape[0], frame.shape[1])
             
             # Sample a pixel in the corner (should not be green)
             corner_pixel = frame[5, 5]

@@ -11,3 +11,12 @@ from src.application.render_video.use_case import RenderVideo
 from src.application.telemetry import TelemetryRecorder
 
 __all__ = ["AvatarCompiler", "ChunkConfig", "RenderVideo", "TelemetryRecorder"]
+
+# Canonical entrypoint: make this avatar talk (June 2026 consolidation).
+# Replaces inlined orchestration in tools/speak_avatar.py and the
+# scratch/ scripts (animate_edge_tts.py, run_real_rendering.py, render_user_avatar.py).
+from src.application.speak_avatar import (
+    SpeakAvatarResult,
+    speak_avatar,
+    speak_avatar_sync,
+)

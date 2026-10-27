@@ -138,6 +138,37 @@ def apply_chroma_key(body_frame: np.ndarray, bg_image: np.ndarray) -> np.ndarray
     return blended.clip(0, 255).astype(np.uint8)
 
 
+def _fit_frame_to_square(frame: np.ndarray, side: int) -> np.ndarray:
+    """Return *frame* centered inside a square canvas of ``side`` pixels.
+
+    The content keeps its aspect ratio. A blurred square crop of the same frame
+    is used as the backdrop so we do not waste the empty area with solid bars.
+    """
+    if side <= 0:
+        raise ValueError(f"Square side must be positive, got {side}")
+
+    height, width = frame.shape[:2]
+    scale = min(side / float(width), side / float(height))
+    resized_w = max(1, int(round(width * scale)))
+    resized_h = max(1, int(round(height * scale)))
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_CUBIC
+    foreground = cv2.resize(frame, (resized_w, resized_h), interpolation=interpolation)
+
+    crop_side = min(height, width)
+    crop_x = (width - crop_side) // 2
+    crop_y = (height - crop_side) // 2
+    square_bg = frame[crop_y:crop_y + crop_side, crop_x:crop_x + crop_side]
+    if square_bg.shape[0] != side:
+        square_bg = cv2.resize(square_bg, (side, side), interpolation=cv2.INTER_AREA)
+    square_bg = cv2.GaussianBlur(square_bg, (0, 0), 18.0)
+
+    canvas = square_bg.copy()
+    offset_x = (side - resized_w) // 2
+    offset_y = (side - resized_h) // 2
+    canvas[offset_y:offset_y + resized_h, offset_x:offset_x + resized_w] = foreground
+    return canvas
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main compositor
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,6 +234,7 @@ class OpenCVFaceCompositor(Compositor):
         fps    = body_cap.get(cv2.CAP_PROP_FPS) or 25.0
         width  = int(body_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(body_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        square_side = min(width, height)
 
         # Prepare output directory layout
         runtime_dir = request.output_path.parent
@@ -215,11 +247,11 @@ class OpenCVFaceCompositor(Compositor):
             debug_dir.mkdir(parents=True, exist_ok=True)
 
         fourcc  = cv2.VideoWriter_fourcc(*"mp4v")
-        writer  = cv2.VideoWriter(str(request.output_path), fourcc, fps, (width, height))
+        writer  = cv2.VideoWriter(str(request.output_path), fourcc, fps, (square_side, square_side))
         if request.debug and debug_dir is not None:
             debug_writer = cv2.VideoWriter(
                 str(debug_dir / "composite_debug.mp4"),
-                fourcc, fps, (width, height),
+                fourcc, fps, (square_side, square_side),
             )
 
         # Check for TV studio background
@@ -255,7 +287,7 @@ class OpenCVFaceCompositor(Compositor):
                 bbox = bboxes[frame_idx]
                 if not np.all(np.isfinite(bbox)):
                     LOG.warning("Non-finite bbox at frame %d; dropping", frame_idx)
-                    writer.write(body_frame)   # pass through body unchanged
+                    writer.write(_fit_frame_to_square(body_frame, square_side))
                     dropped_frames += 1
                     frames_processed += 1
                     continue
@@ -272,7 +304,7 @@ class OpenCVFaceCompositor(Compositor):
                 crop_w = x2 - x1
                 crop_h = y2 - y1
                 if crop_w <= 0 or crop_h <= 0:
-                    writer.write(body_frame)
+                    writer.write(_fit_frame_to_square(body_frame, square_side))
                     dropped_frames += 1
                     frames_processed += 1
                     continue
@@ -333,14 +365,12 @@ class OpenCVFaceCompositor(Compositor):
                 ).clip(0, 255).astype(np.uint8)
 
                 # ── 10. Write runtime output ───────────────────────────────────
-                writer.write(composite)
+                square_composite = _fit_frame_to_square(composite, square_side)
+                writer.write(square_composite)
 
                 # ── 11. Debug output (optional) ────────────────────────────────
                 if debug_writer is not None:
-                    dbg_frame = _draw_debug_overlay(
-                        composite, smoothed_alpha, (x1, y1, x2, y2), frame_idx
-                    )
-                    debug_writer.write(dbg_frame)
+                    debug_writer.write(square_composite)
 
                 mask_area_sum += float(np.mean(smoothed_alpha))
                 frames_processed += 1
